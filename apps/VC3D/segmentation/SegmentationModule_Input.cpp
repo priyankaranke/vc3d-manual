@@ -141,7 +141,12 @@ bool SegmentationModule::handleKeyPress(QKeyEvent* event)
             event->accept();
             return true;
         }
-        return false;
+        const bool brushShortcut =
+            (event->key() == vc3d::keybinds::keypress::PushPullIn.key ||
+             event->key() == vc3d::keybinds::keypress::PushPullOut.key ||
+             event->key() == vc3d::keybinds::keypress::PushPullRadiusDown.key ||
+             event->key() == vc3d::keybinds::keypress::PushPullRadiusUp.key);
+        if (!_pointGrowTool.active() || !brushShortcut) return false;
     }
 
     // B: Toggle edit approved mask (only if show approval mask is enabled)
@@ -286,6 +291,8 @@ bool SegmentationModule::handleKeyPress(QKeyEvent* event)
         const float step = (event->key() == vc3d::keybinds::keypress::PushPullRadiusUp.key) ? 0.25f : -0.25f;
         const float newRadius = _pushPullRadiusSteps + step;
         setPushPullRadius(newRadius);
+        useFalloff(FalloffTool::PushPull);
+        emit statusMessageRequested(tr("Push/Pull radius: %1 grid steps").arg(_pushPullRadiusSteps,0,'f',2), kStatusShort);
         event->accept();
         return true;
     }
@@ -426,12 +433,9 @@ bool SegmentationModule::handleKeyRelease(QKeyEvent* event)
     const bool pushPullKey =
         (event->key() == vc3d::keybinds::keypress::PushPullIn.key ||
          event->key() == vc3d::keybinds::keypress::PushPullOut.key);
-    const Qt::KeyboardModifiers pushPullMods = event->modifiers();
-    const Qt::KeyboardModifiers disallowedMods = pushPullMods &
-                                                 ~(Qt::ControlModifier | Qt::KeypadModifier);
-    if (pushPullKey && disallowedMods == Qt::NoModifier) {
+    if (pushPullKey) {
         const int direction = (event->key() == vc3d::keybinds::keypress::PushPullOut.key) ? 1 : -1;
-        stopPushPull(direction);
+        if (!event->isAutoRepeat()) stopPushPull(direction);
         event->accept();
         return true;
     }
@@ -614,6 +618,11 @@ void SegmentationModule::handleMouseMove(VolumeViewerBase* viewer,
                                          Qt::KeyboardModifiers modifiers,
                                          const QPointF& scenePos)
 {
+    if (_pointGrowTool.active() && buttons == Qt::NoButton) {
+        recordPointerSample(viewer, worldPos);
+        updateHover(viewer, worldPos, scenePos);
+        return;
+    }
     if (_manualAddMode && handleManualAddMouseMove(viewer, buttons, scenePos)) {
         return;
     }
@@ -867,7 +876,7 @@ void SegmentationModule::handleWheel(VolumeViewerBase* viewer,
         return;
     }
     const float step = deltaSteps * 0.25f;
-    FalloffTool targetTool = FalloffTool::Drag;
+    FalloffTool targetTool = _pointGrowTool.active() ? FalloffTool::PushPull : FalloffTool::Drag;
     const bool lineStrokeActive = _lineTool && _lineTool->strokeActive();
     if (_lineDrawKeyActive || lineStrokeActive) {
         targetTool = FalloffTool::Line;
@@ -887,6 +896,7 @@ void SegmentationModule::handleWheel(VolumeViewerBase* viewer,
         break;
     case FalloffTool::PushPull:
         setPushPullRadius(newRadius);
+        useFalloff(FalloffTool::PushPull);
         break;
     }
 

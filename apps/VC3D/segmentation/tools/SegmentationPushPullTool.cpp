@@ -502,6 +502,14 @@ bool SegmentationPushPullTool::start(int direction, std::optional<bool> alphaOve
         return true;
     }
 
+    if (_ppState.active) stopAll(false);
+    if (_module._pointGrowTool.active() &&
+        _editManager->previewPoints().size() != _module._pointGrowTool.points().size()) {
+        // Materialize the padded chart before resolving the brush's grid index.
+        if (!_module.publishPointGrowPreview()) return false;
+        _module._hover.clear();
+    }
+
     if (!_module.ensureHoverTarget()) {
         qCWarning(lcSegPushPull) << "Push/pull start failed: no hover target.";
         return false;
@@ -573,12 +581,12 @@ void SegmentationPushPullTool::stop(int direction)
     stopAll();
 }
 
-void SegmentationPushPullTool::stopAll()
+void SegmentationPushPullTool::stopAll(bool finishPendingAlpha)
 {
     const bool wasActive = _ppState.active;
     VolumeViewerBase* activeViewer = _activeViewer;
 
-    if (wasActive && _activeAlphaEnabled && _alphaComputeRunning) {
+    if (wasActive && finishPendingAlpha && _activeAlphaEnabled && _alphaComputeRunning) {
         if (_timer && _timer->isActive()) {
             _timer->stop();
         }
@@ -606,12 +614,18 @@ void SegmentationPushPullTool::stopAll()
     _cachedCol = -1;
     _samplesValid = false;
 
-    if (_module._activeFalloff == SegmentationModule::FalloffTool::PushPull) {
+    if (!_module._pointGrowTool.active() && _module._activeFalloff == SegmentationModule::FalloffTool::PushPull) {
         _module.useFalloff(SegmentationModule::FalloffTool::Drag);
     }
 
     // Finalize the edits and trigger final surface update
-    if (wasActive && _editManager && _editManager->hasSession() && _state) {
+    if (wasActive && _editManager && _editManager->hasSession() && _module._pointGrowTool.active()) {
+        _editManager->commitActiveDrag();
+        if (!_module._pointGrowTool.adoptPreview(_editManager->previewPoints())) {
+            emit _module.statusMessageRequested(QStringLiteral("Push/pull could not preserve the chart; stroke reverted."), kStatusMedium);
+        }
+        _module.publishPointGrowPreview();
+    } else if (wasActive && _editManager && _editManager->hasSession() && _state) {
         const auto editedVerts = _editManager->editedVertices();
 
         // Capture delta for undo before applyPreview() clears edited vertices
@@ -688,7 +702,8 @@ bool SegmentationPushPullTool::applyStepInternal()
 
     // Check if we can reuse existing samples (position unchanged and samples still valid)
     const bool positionChanged = (row != _cachedRow || col != _cachedCol);
-    const bool needRebuild = positionChanged || !_samplesValid || !_editManager->activeDrag().active;
+    const bool needRebuild = positionChanged || !_samplesValid || !_editManager->activeDrag().active ||
+        _cachedRadius != _editManager->radius() || _cachedSigma != _editManager->sigma();
 
     if (needRebuild) {
         if (!_editManager->beginActiveDrag({row, col})) {
@@ -698,6 +713,8 @@ bool SegmentationPushPullTool::applyStepInternal()
         _cachedRow = row;
         _cachedCol = col;
         _samplesValid = true;
+        _cachedRadius = _editManager->radius();
+        _cachedSigma = _editManager->sigma();
     }
 
     auto centerWorldOpt = _editManager->vertexWorldPosition(row, col);
@@ -777,7 +794,7 @@ bool SegmentationPushPullTool::applyStepInternal()
     refreshActiveViewer(hover.viewer);
 
     _module.refreshOverlay();
-    _module.markAutosaveNeeded();
+    if (!_module._pointGrowTool.active()) _module.markAutosaveNeeded();
     return true;
 }
 
@@ -994,6 +1011,12 @@ void SegmentationPushPullTool::launchAlphaCompute()
 
 void SegmentationPushPullTool::refreshActiveViewer(VolumeViewerBase* viewer)
 {
+    if (_module._pointGrowTool.active() && _editManager && _state) {
+        // Every pane follows the live brush, while saving waits for Apply.
+        ++_module._pointGrowRevision;
+        _state->setSurface("segmentation", _editManager->previewSurface(), false, true);
+        return;
+    }
     if (!_editManager || !viewer) {
         if (_state && _editManager) {
             _state->setSurface("segmentation", _editManager->previewSurface(), false, true);
@@ -1035,6 +1058,7 @@ void SegmentationPushPullTool::refreshActiveViewer(VolumeViewerBase* viewer)
 void SegmentationPushPullTool::setDeferredPlaneIntersections(VolumeViewerBase* activeViewer,
                                                              bool defer)
 {
+    if (defer && _module._pointGrowTool.active()) return;
     auto* manager = _module.viewerManager();
     if (!manager) {
         return;
@@ -1127,7 +1151,7 @@ void SegmentationPushPullTool::applyAlphaResult()
         refreshActiveViewer(hover.valid ? hover.viewer : nullptr);
 
         _module.refreshOverlay();
-        _module.markAutosaveNeeded();
+        if (!_module._pointGrowTool.active()) _module.markAutosaveNeeded();
         qCInfo(lcSegPushPull) << "Alpha push/pull: applied result.";
     } else if (!result.noMovementReason.empty()) {
         const QString message = QString::fromStdString(result.noMovementReason);

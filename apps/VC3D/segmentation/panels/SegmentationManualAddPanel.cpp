@@ -28,7 +28,7 @@ SegmentationManualAddPanel::SegmentationManualAddPanel(const QString& settingsGr
     auto* group = new QGroupBox(tr("Manual Add"), this);
     auto* layout = new QVBoxLayout(group);
     auto* help = new QLabel(tr("Shift+E starts or applies. Click in XY, XZ or YZ: beyond an edge extends the sheet; on existing geometry corrects it locally. "
-                              "Ctrl/Cmd+Z undoes a click; Escape cancels. Right-drag pans; Shift+scroll slices; scroll zooms. "
+                              "Hold A/D to push/pull in any pane; Q/E change brush radius. Ctrl/Cmd+Z undoes a click or stroke; Escape cancels. Right-drag pans; Shift+scroll slices; scroll zooms. "
                               "Hover and press R to center all CT slices at that point."), group);
     help->setWordWrap(true);
     layout->addWidget(help);

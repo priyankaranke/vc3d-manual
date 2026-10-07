@@ -2,6 +2,7 @@
 #include "SegmentationWidget.hpp"
 #include "CState.hpp"
 #include "ViewerManager.hpp"
+#include "tools/SegmentationPushPullTool.hpp"
 #include <QElapsedTimer>
 
 namespace {
@@ -56,6 +57,7 @@ bool SegmentationModule::publishPointGrowPreview()
 bool SegmentationModule::finishPointGrow(bool apply)
 {
     if (!_pointGrowSnapshot || !_editManager) return false;
+    if (_pushPullTool) _pushPullTool->stopAll(false);
     auto surface = _editManager->baseSurface();
     if (!surface) return false;
     if (apply && _pointGrowTool.changed()) {
@@ -87,6 +89,7 @@ bool SegmentationModule::finishPointGrow(bool apply)
         emit statusMessageRequested(tr("Manual edits canceled; original surface restored."),kStatusShort);
     }
     _pointGrowTool.clear();
+    _editManager->setAllowNewVertexEdits(false);
     _pointGrowSnapshot.reset();
     _manualAddTool->clear();
     _manualAddMode = false;

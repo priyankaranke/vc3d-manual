@@ -100,6 +100,7 @@ public:
 
     [[nodiscard]] float radius() const { return _radiusSteps; }
     [[nodiscard]] float sigma() const { return _sigmaSteps; }
+    void setAllowNewVertexEdits(bool enabled) { _allowNewVertexEdits = enabled; }
     [[nodiscard]] float editScale() const { return _editScale; }
 
     [[nodiscard]] bool hasPendingChanges() const { return _hasPendingEdits; }
@@ -174,6 +175,7 @@ private:
     std::unique_ptr<SurfacePatchIndex> _editSurfacePatchIndex;
 
     float _radiusSteps{3.0f};
+    bool _allowNewVertexEdits{false};
     float _sigmaSteps{1.5f};
     float _editScale{1.0f};
     bool _hasPendingEdits{false};

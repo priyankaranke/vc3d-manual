@@ -1202,13 +1202,25 @@ void SegmentationOverlayController::buildRadiusOverlay(const State& state,
     }
 
     const cv::Vec3f world = state.activeMarker->world;
-    const QPointF sceneCenter = viewer->volumeToScene(world);
-
-    cv::Vec3f offsetWorld = world;
-    offsetWorld[0] += radiusWorld;
-    const QPointF sceneEdge = viewer->volumeToScene(offsetWorld);
-    const qreal radiusPixels = std::hypot(sceneEdge.x() - sceneCenter.x(),
-                                          sceneEdge.y() - sceneCenter.y());
+    QPointF sceneCenter = viewer->volumeToScene(world);
+    qreal radiusPixels = 0;
+    if (auto* surface = dynamic_cast<QuadSurface*>(viewer->currentSurface())) {
+        const auto scale = surface->scale();
+        const auto center = surface->center();
+        const float u=state.activeMarker->col/scale[0]-center[0];
+        const float v=state.activeMarker->row/scale[1]-center[1];
+        sceneCenter=viewer->surfaceCoordsToScene(u,v);
+        const auto edge=viewer->surfaceCoordsToScene(u+state.gaussianRadiusSteps/scale[0],v);
+        radiusPixels=std::hypot(edge.x()-sceneCenter.x(),edge.y()-sceneCenter.y());
+    } else {
+        // X alone has no screen extent in the YZ pane.
+        for (int axis=0;axis<3;++axis) {
+            auto offsetWorld=world;
+            offsetWorld[axis]+=radiusWorld;
+            const auto edge=viewer->volumeToScene(offsetWorld);
+            radiusPixels=std::max(radiusPixels,std::hypot(edge.x()-sceneCenter.x(),edge.y()-sceneCenter.y()));
+        }
+    }
 
     if (radiusPixels <= 1.0e-3) {
         return;

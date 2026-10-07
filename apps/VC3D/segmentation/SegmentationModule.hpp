@@ -196,6 +196,7 @@ public slots:
 
 signals:
     void manualAddModeChanged(bool active);
+    void pushPullSettingsChanged();
     void editingEnabledChanged(bool enabled);
     void annotateModeChanged(bool enabled);
     void statusMessageRequested(const QString& text, int timeoutMs);

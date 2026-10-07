@@ -127,6 +127,24 @@ TEST_CASE("one spline factorization still reproduces affine native coordinates")
     REQUIRE(cv::norm(*value-cv::Vec3f(1160,2140,3037))<.001);
 }
 
+TEST_CASE("brush strokes share undo with clicks and move their existing constraints") {
+    auto p=plane(); PointGrowTool tool; REQUIRE(tool.begin(p)); std::string status;
+    REQUIRE_MESSAGE(tool.addPoint({1280,1100,1002},2,status),status);
+    const auto afterClick=tool.points().clone();
+    const auto firstAnchor=tool.anchors().back();
+    auto brushed=afterClick.clone();
+    for (int r=0;r<brushed.rows;++r) for (int c=0;c<brushed.cols;++c)
+        if (brushed(r,c)[0]>=0) brushed(r,c)[2]+=3;
+    REQUIRE(tool.adoptPreview(brushed));
+    REQUIRE(tool.anchors().back()==firstAnchor+cv::Vec3f(0,0,3));
+    REQUIRE_MESSAGE(tool.addPoint({1340,1100,1005},2,status),status);
+    REQUIRE(tool.anchors().front()==firstAnchor+cv::Vec3f(0,0,3));
+    REQUIRE(tool.undo()); REQUIRE(cv::norm(tool.points(),brushed,cv::NORM_INF)==0);
+    REQUIRE(tool.undo()); REQUIRE(cv::norm(tool.points(),afterClick,cv::NORM_INF)==0);
+    REQUIRE(tool.anchors().back()==firstAnchor);
+    REQUIRE(tool.undo()); REQUIRE(tool.changedVertices().empty());
+}
+
 TEST_CASE("surface preview never interpolates invalid sentinel borders into CT") {
     auto p=plane();
     p.col(0).setTo(cv::Vec3f(-1,-1,-1));

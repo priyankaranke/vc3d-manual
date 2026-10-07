@@ -91,6 +91,7 @@ void SegmentationModule::setPushPullRadius(float radiusSteps)
     if (_widget) {
         _widget->setPushPullRadius(_pushPullRadiusSteps);
     }
+    emit pushPullSettingsChanged();
 }
 
 void SegmentationModule::setPushPullSigma(float sigmaSteps)
@@ -106,6 +107,7 @@ void SegmentationModule::setPushPullSigma(float sigmaSteps)
     if (_widget) {
         _widget->setPushPullSigma(_pushPullSigmaSteps);
     }
+    emit pushPullSettingsChanged();
 }
 
 float SegmentationModule::falloffRadius(FalloffTool tool) const
@@ -166,6 +168,7 @@ void SegmentationModule::setPushPullStepMultiplier(float multiplier)
     if (_widget && std::fabs(_widget->pushPullStep() - sanitized) >= kFloatEpsilon) {
         _widget->setPushPullStep(sanitized);
     }
+    emit pushPullSettingsChanged();
 }
 
 void SegmentationModule::setEditScale(float scale)

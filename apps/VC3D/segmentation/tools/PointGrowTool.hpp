@@ -14,6 +14,8 @@ public:
     using GridKey = SegmentationEditManager::GridKey;
     bool begin(const cv::Mat_<cv::Vec3f>& points);
     bool addPoint(const cv::Vec3f& world, int width, std::string& status);
+    // Record one native brush stroke in the same history as CT clicks.
+    bool adoptPreview(const cv::Mat_<cv::Vec3f>& points);
     bool undo();
     void clear();
     bool active() const { return !_points.empty(); }

@@ -48,7 +48,7 @@ public:
 
     bool start(int direction, std::optional<bool> alphaOverride = std::nullopt);
     void stop(int direction);
-    void stopAll();
+    void stopAll(bool finishPendingAlpha = true);
     bool applyStep();
 
     void cancel() override { stopAll(); }
@@ -127,6 +127,8 @@ private:
     int _cachedRow{-1};
     int _cachedCol{-1};
     bool _samplesValid{false};
+    float _cachedRadius{0.0f};
+    float _cachedSigma{0.0f};
 
     // Async alpha computation state
     QFutureWatcher<AlphaResult> _alphaWatcher;

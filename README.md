@@ -41,7 +41,11 @@ CT cross sections remain single slices so clicks have an exact depth.
   or in a hole to extend the sheet; click on existing geometry to correct it
   locally. Each click immediately updates the surface geometry and preview.
   **Apply points / Shift+E** saves the edit.
-- **Ctrl/Cmd+Z:** undo the last click. **Escape:** cancel the entire uncommitted
+- **A/D:** hold to push/pull at the cursor in the flattened or CT views, including
+  newly added geometry. **Q/E:** decrease/increase the brush radius. The toolbar
+  also exposes radius, Gaussian falloff, and step size. Each held stroke is one
+  undo operation, kept in the same pending edit as point clicks.
+- **Ctrl/Cmd+Z:** undo the last click or stroke. **Escape:** cancel the entire uncommitted
   extension and restore the original surface and channels.
 - **R** while hovering: center linked CT slices at that location. **Right-drag:**
   pan. **Wheel:** zoom. **Shift+wheel:** move through CT slices.
@@ -53,8 +57,10 @@ move the clicked vertex exactly onto the CT point, with a smooth displacement
 of its connected neighbours that fades to zero within the edit width plus one
 grid step. Other clicked anchors remain pinned; holes and distant vertices are
 unchanged. The native chart scale is retained. Padding translates ancillary
-channels and correction anchors without image resizing. Overstretched or folded
-edits are rejected; grow in short steps (at most 12 grid steps per click).
+channels and correction anchors without image resizing. Clicks that would
+overstretch or fold the chart are rejected; grow in short steps (at most 12 grid
+steps per click). A/D retains VC3D's native brush behaviour and moves any clicked
+anchors with the edited surface.
 This does not automatically trace the tissue.
 Applied edits use VC3D's normal atomic tifxyz saving and whole-edit undo.
 

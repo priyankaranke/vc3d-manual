@@ -7190,7 +7190,31 @@ void CWindow::CreateWidgets(void)
         if (const auto* focus = _state->poi("focus")) recenterPlaneViewersOn(focus->p);
     });
     manualRow->addWidget(focusPatch);
-    auto* help = new QLabel(tr("Click CT: grow / touch up   ·   R: center slices   ·   Ctrl/Cmd+Z: undo   ·   Esc: cancel"),ui.tabSegment);
+    const auto brushControl = [this,manualRow](const QString& label,const QString& name,
+                                              double low,double high,double step,
+                                              void (SegmentationModule::*setter)(float)) {
+        manualRow->addWidget(new QLabel(label,ui.tabSegment));
+        auto* spin = new QDoubleSpinBox(ui.tabSegment);
+        spin->setObjectName(name);
+        spin->setRange(low,high);
+        spin->setDecimals(2);
+        spin->setSingleStep(step);
+        spin->setMaximumWidth(78);
+        spin->setKeyboardTracking(false);
+        spin->setFocusPolicy(Qt::ClickFocus);
+        connect(spin,QOverload<double>::of(&QDoubleSpinBox::valueChanged),this,[this,setter](double value) {
+            if (_segmentationModule) (_segmentationModule.get()->*setter)(static_cast<float>(value));
+        });
+        manualRow->addWidget(spin);
+        return spin;
+    };
+    brushControl(tr("Radius"),QStringLiteral("directPushPullRadius"),0.25,512,0.25,
+                 &SegmentationModule::setPushPullRadius)->setToolTip(tr("A/D brush radius in grid steps. Q/E decrease/increase it."));
+    brushControl(tr("Falloff"),QStringLiteral("directPushPullSigma"),0.05,256,0.1,
+                 &SegmentationModule::setPushPullSigma)->setToolTip(tr("Gaussian sigma in grid steps: controls how gently the brush fades."));
+    brushControl(tr("Step"),QStringLiteral("directPushPullStep"),0.05,400,0.05,
+                 &SegmentationModule::setPushPullStepMultiplier)->setToolTip(tr("Movement multiplier per A/D step."));
+    auto* help = new QLabel(tr("A/D: push/pull · Q/E: radius · R: focus · Cmd/Ctrl+Z: undo · Esc: cancel"),ui.tabSegment);
     manualRow->addWidget(help);
     manualRow->addStretch();
     aWidgetLayout->addLayout(manualRow);
@@ -7534,6 +7558,21 @@ void CWindow::CreateWidgets(void)
             addPoints->setText(active ? tr("Apply points · Shift+E") : tr("Add points · Shift+E"));
         });
     }
+    const auto syncBrushControls = [this]() {
+        const std::array<std::pair<const char*,float>,3> settings{{
+            {"directPushPullRadius",_segmentationWidget->pushPullRadius()},
+            {"directPushPullSigma",_segmentationWidget->pushPullSigma()},
+            {"directPushPullStep",_segmentationWidget->pushPullStep()}
+        }};
+        for (const auto& [name,value] : settings) {
+            if (auto* spin = findChild<QDoubleSpinBox*>(QString::fromLatin1(name))) {
+                const QSignalBlocker block(spin);
+                spin->setValue(value);
+            }
+        }
+    };
+    connect(_segmentationModule.get(),&SegmentationModule::pushPullSettingsChanged,this,syncBrushControls);
+    syncBrushControls();
 
     if (_segmentationModule && _planeSlicingOverlay) {
         QPointer<PlaneSlicingOverlayController> overlayPtr(_planeSlicingOverlay.get());

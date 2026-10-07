@@ -223,6 +223,23 @@ bool PointGrowTool::addPoint(const cv::Vec3f& world, int width, std::string& sta
     return true;
 }
 
+bool PointGrowTool::adoptPreview(const cv::Mat_<cv::Vec3f>& points) {
+    if (!active() || points.size() != _points.size()) return false;
+    Undo undo; undo.anchors = _anchors;
+    for (int r=0;r<points.rows;++r) for (int c=0;c<points.cols;++c) {
+        if (points(r,c) == _points(r,c)) continue;
+        // Push/pull moves existing vertices; it must not create/delete cells.
+        if (!valid(points(r,c)) || !valid(_points(r,c))) return false;
+        undo.changes.push_back({{c,r},_points(r,c)});
+    }
+    if (undo.changes.empty()) return true;
+    points.copyTo(_points);
+    // An intentional brush stroke moves old click constraints with the sheet.
+    for (auto& anchor : _anchors) anchor.world = _points(anchor.grid);
+    _undo.push_back(std::move(undo));
+    return true;
+}
+
 bool PointGrowTool::undo() {
     if (_undo.empty()) return false;
     auto u=std::move(_undo.back()); _undo.pop_back();

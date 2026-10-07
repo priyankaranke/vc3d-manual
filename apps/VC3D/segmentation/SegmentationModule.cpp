@@ -1419,13 +1419,27 @@ void SegmentationModule::refreshOverlay()
     }
 
     if (_manualAddMode && _pointGrowTool.active()) {
+        // Native chart scale is grid nodes per voxel. Brush radii are in nodes.
+        if (auto surface = _editManager->previewSurface())
+            state.gridStepWorld = 1.0f / averageScale(surface->scale());
+        if (state.activeMarker) state.activeMarker->isActive = true;
         state.manualAddActive = true;
         state.manualAddRevision = _pointGrowRevision;
         state.manualAddTintOpacity = 0.35f;
         state.manualAddPlaneConstraints = _pointGrowTool.anchors();
-        const auto& preview = _pointGrowTool.points();
+        const auto& preview = pushPullActive ? _editManager->previewPoints() : _pointGrowTool.points();
         std::set<std::pair<int,int>> cells;
-        for (const auto& key : _pointGrowTool.changedVertices()) {
+        auto changed = _pointGrowTool.changedVertices();
+        if (pushPullActive) {
+            for (const auto& v : _editManager->editedVertices()) changed.push_back({v.row,v.col});
+            std::sort(changed.begin(),changed.end(),[](const auto& a,const auto& b) {
+                return std::tie(a.row,a.col)<std::tie(b.row,b.col);
+            });
+            changed.erase(std::unique(changed.begin(),changed.end(),[](const auto& a,const auto& b) {
+                return a.row==b.row && a.col==b.col;
+            }),changed.end());
+        }
+        for (const auto& key : changed) {
             state.manualAddPreviewVertices.push_back(preview(key.row,key.col));
             // Paint geometry synchronously, even while CT texture is loading.
             if (!state.manualAddHoverFillSpans.empty() &&
@@ -2146,6 +2160,8 @@ bool SegmentationModule::beginManualAdd()
         _directCTWorkflow = true;
         _pointGrowSnapshot = segmentation::snapshotSurface(*_editManager->baseSurface());
         if (!_pointGrowTool.begin(_editManager->previewPoints())) return false;
+        _editManager->setAllowNewVertexEdits(true);
+        useFalloff(FalloffTool::PushPull);
     } else {
         _directCTWorkflow = false;
     }
@@ -2154,7 +2170,7 @@ bool SegmentationModule::beginManualAdd()
     _manualAddHoverThrottle.invalidate();
     _widget->setManualAddActive(true);
     refreshOverlay();
-    emit statusMessageRequested(tr("Click CT to grow beyond an edge or touch up existing geometry. Shift+E applies; Escape cancels."), kStatusShort);
+    emit statusMessageRequested(tr("Click CT to grow or touch up. A/D push/pull; Q/E change radius. Shift+E applies; Escape cancels."), kStatusShort);
     return true;
 }
 
@@ -2320,6 +2336,7 @@ bool SegmentationModule::recomputeManualAdd(bool refit)
 bool SegmentationModule::clearManualAddPending()
 {
     if (_pointGrowTool.active()) {
+        if (_pushPullTool) _pushPullTool->stopAll(false);
         while (_pointGrowTool.undo()) {}
         return publishPointGrowPreview();
     }
@@ -2345,6 +2362,7 @@ bool SegmentationModule::clearManualAddPending()
 bool SegmentationModule::undoManualAddPlaneConstraint()
 {
     if (_pointGrowTool.active()) {
+        if (_pushPullTool) _pushPullTool->stopAll(false);
         if (_pointGrowTool.undo()) publishPointGrowPreview();
         // Consume Undo even when empty; never undo a saved segment underneath
         // a live manual-add transaction.
@@ -2395,6 +2413,7 @@ bool SegmentationModule::handleManualAddMousePress(VolumeViewerBase* viewer,
                 return true;
             }
             std::string status;
+            if (_pushPullTool) _pushPullTool->stopAll(false);
             if (_pointGrowTool.addPoint(worldPos, _widget->manualAddConfig().stripWidth, status) &&
                 !publishPointGrowPreview()) {
                 _pointGrowTool.undo();

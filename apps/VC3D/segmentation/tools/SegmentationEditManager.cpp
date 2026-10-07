@@ -84,6 +84,7 @@ bool SegmentationEditManager::beginSession(std::shared_ptr<QuadSurface> baseSurf
 
 void SegmentationEditManager::endSession()
 {
+    _allowNewVertexEdits = false;
     _editedVertices.clear();
     _recentTouched.clear();
     clearActiveDrag();
@@ -422,6 +423,9 @@ bool SegmentationEditManager::restorePreviewSnapshot(const cv::Mat_<cv::Vec3f>& 
 
 void SegmentationEditManager::resetPreview()
 {
+    // A reset discards edits; rebuilding first would replay them onto the
+    // baseline and then forget the information needed to undo them.
+    _editedVertices.clear();
     if (_preResizeOriginalPoints && previewPointsPtr()) {
         _preResizeOriginalPoints->copyTo(*previewPointsPtr());
         _originalPoints = std::make_unique<cv::Mat_<cv::Vec3f>>(_preResizeOriginalPoints->clone());
@@ -431,6 +435,7 @@ void SegmentationEditManager::resetPreview()
         }
     } else {
         rebuildPreviewFromOriginal();
+        if (_baseSurface) _baseSurface->invalidateCache();
     }
     rebuildEditSurfacePatchIndex();
     _editedVertices.clear();
@@ -1164,7 +1169,7 @@ bool SegmentationEditManager::buildActiveSamples(const std::pair<int, int>& grid
         for (int c = colStart; c <= colEnd; ++c) {
             const cv::Vec3f& original = (*_originalPoints)(r, c);
             const cv::Vec3f& baseWorld = (*preview)(r, c);
-            if (isInvalidPoint(original) || isInvalidPoint(baseWorld)) {
+            if ((!_allowNewVertexEdits && isInvalidPoint(original)) || isInvalidPoint(baseWorld)) {
                 continue;
             }
 
@@ -1240,7 +1245,7 @@ void SegmentationEditManager::recordVertexEdit(int row, int col, const cv::Vec3f
     }
 
     const cv::Vec3f& original = (*_originalPoints)(row, col);
-    if (isInvalidPoint(original)) {
+    if (isInvalidPoint(original) && !_allowNewVertexEdits) {
         return;
     }
 

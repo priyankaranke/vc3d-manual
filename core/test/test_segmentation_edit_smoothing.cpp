@@ -3,9 +3,35 @@
 #include "segmentation/tools/SegmentationEditManager.hpp"
 #include "ViewerManager.hpp"
 #include "vc/core/util/QuadSurface.hpp"
+#include <opencv2/core.hpp>
 
 // These tests exercise editing without a viewer or its background index.
 SurfacePatchIndex* ViewerManager::surfacePatchIndex() { return nullptr; }
+
+TEST_CASE("manual brush includes newly grown vertices and preserves the cancel baseline")
+{
+    cv::Mat_<cv::Vec3f> points(9,9);
+    for (int r=0;r<9;++r) for (int c=0;c<9;++c) points(r,c)={100+20.f*c,100+20.f*r,100};
+    const auto filled=points.clone();
+    points(4,4)={-1,-1,-1};
+    const auto original=points.clone();
+    auto surface=std::make_shared<QuadSurface>(points,cv::Vec2f(.05f,.05f));
+    SegmentationEditManager editor;
+    REQUIRE(editor.beginSession(surface));
+    REQUIRE(editor.setPreviewPointsOnly(filled,{{4,4}},true));
+    editor.setAllowNewVertexEdits(true);
+    editor.setRadius(2); editor.setSigma(1); editor.setEditScale(1);
+    REQUIRE(editor.beginActiveDrag({4,4}));
+    REQUIRE(editor.updateActiveDrag(filled(4,4)+cv::Vec3f(0,0,2)));
+    REQUIRE(editor.previewPoints()(4,4)==filled(4,4)+cv::Vec3f(0,0,2));
+    REQUIRE(editor.previewPoints()(4,5)[2]>100);
+    REQUIRE(editor.previewPoints()(4,7)==filled(4,7));
+    const auto edits=editor.editedVertices();
+    REQUIRE(std::any_of(edits.begin(),edits.end(),[](const auto& v){return v.row==4&&v.col==4&&v.currentWorld[2]==102;}));
+    editor.commitActiveDrag();
+    editor.resetPreview();
+    REQUIRE(cv::norm(editor.previewPoints(),original,cv::NORM_INF)==0);
+}
 
 TEST_CASE("edit smoothing preserves dragged boundaries and holes while smoothing interiors")
 {
