@@ -2410,11 +2410,13 @@ bool SegmentationModule::undoManualAddPlaneConstraint()
     if (_pointGrowTool.active()) {
         if (_pushPullTool) _pushPullTool->stopAll(false);
         if (_pointGrowTool.undo()) {
-            publishPointGrowPreview();
+            if (!publishPointGrowPreview()) _pointGrowTool.redo();
         } else if (!_undoHistory.empty()) {
             finishPointGrow(true);
             restoreUndoSnapshot();
             ensureDirectCTEditing();
+        } else {
+            emit statusMessageRequested(tr("Nothing to undo."), kStatusShort);
         }
         return true;
     }
@@ -2445,6 +2447,25 @@ bool SegmentationModule::undoManualAddPlaneConstraint()
     return true;
 }
 
+bool SegmentationModule::redoManualAdd()
+{
+    if (_viewOnly || !_pointGrowTool.active()) return false;
+    if (_pushPullTool) _pushPullTool->stopAll(false);
+    if (_pointGrowTool.redo()) {
+        if (publishPointGrowPreview()) return true;
+        _pointGrowTool.undo();
+        return false;
+    }
+    if (!_redoHistory.empty()) {
+        finishPointGrow(true);
+        const bool restored = restoreUndoSnapshot(true);
+        ensureDirectCTEditing();
+        return restored;
+    }
+    emit statusMessageRequested(tr("Nothing to redo."), kStatusShort);
+    return true;
+}
+
 bool SegmentationModule::handleManualAddMousePress(VolumeViewerBase* viewer,
                                                    const cv::Vec3f& worldPos,
                                                    Qt::MouseButton button,
@@ -2464,10 +2485,12 @@ bool SegmentationModule::handleManualAddMousePress(VolumeViewerBase* viewer,
             }
             std::string status;
             if (_pushPullTool) _pushPullTool->stopAll(false);
-            if (_pointGrowTool.addPoint(worldPos, _widget->manualAddConfig().stripWidth, status) &&
-                !publishPointGrowPreview()) {
-                _pointGrowTool.undo();
-                return true;
+            if (_pointGrowTool.addPoint(worldPos, _widget->manualAddConfig().stripWidth, status)) {
+                if (!publishPointGrowPreview()) {
+                    _pointGrowTool.undo();
+                    return true;
+                }
+                _redoHistory.clear();
             }
             emit statusMessageRequested(QString::fromStdString(status), kStatusMedium);
         }

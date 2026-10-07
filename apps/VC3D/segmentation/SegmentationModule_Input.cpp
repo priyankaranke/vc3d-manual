@@ -75,6 +75,24 @@ bool SegmentationModule::handleKeyPress(QKeyEvent* event)
     if (_viewOnly) return false;
 
     const Qt::KeyboardModifiers keyPressMods = event->modifiers() & ~Qt::KeypadModifier;
+    // Exact modifiers keep Cmd/Ctrl+Shift+Z from also matching Undo.
+    if (!event->isAutoRepeat()) {
+        const bool redoRequested = event->matches(vc3d::keybinds::standard::Redo) ||
+            (event->key() == vc3d::keybinds::keypress::SegmentationRedo.key &&
+             keyPressMods == vc3d::keybinds::keypress::SegmentationRedo.modifiers);
+        const bool undoRequested = event->matches(vc3d::keybinds::standard::Undo) ||
+            (event->key() == vc3d::keybinds::keypress::SegmentationUndo.key &&
+             keyPressMods == vc3d::keybinds::keypress::SegmentationUndo.modifiers);
+        if (redoRequested || undoRequested) {
+            const bool applied = _manualAddMode
+                ? (redoRequested ? redoManualAdd() : undoManualAddPlaneConstraint())
+                : restoreUndoSnapshot(redoRequested);
+            if (!applied)
+                emit statusMessageRequested(redoRequested ? tr("Nothing to redo.") : tr("Nothing to undo."), kStatusShort);
+            event->accept();
+            return true;
+        }
+    }
     if (event->key() == vc3d::keybinds::keypress::ToggleLastGrowthOverlay.key &&
         keyPressMods == vc3d::keybinds::keypress::ToggleLastGrowthOverlay.modifiers &&
         !event->isAutoRepeat() && !_growthInProgress) {
@@ -88,20 +106,6 @@ bool SegmentationModule::handleKeyPress(QKeyEvent* event)
     }
 
     if (_manualAddMode) {
-        if (!event->isAutoRepeat()) {
-            const bool undoRequested =
-                event->matches(vc3d::keybinds::standard::Undo) ||
-                (event->key() == vc3d::keybinds::keypress::SegmentationUndo.key &&
-                 (event->modifiers() & vc3d::keybinds::keypress::SegmentationUndo.modifiers) ==
-                     vc3d::keybinds::keypress::SegmentationUndo.modifiers);
-            if (undoRequested) {
-                if (undoManualAddPlaneConstraint()) {
-                    event->accept();
-                    return true;
-                }
-                return false;
-            }
-        }
 
         const bool manualAddLineModeCycle =
             !event->isAutoRepeat() &&
@@ -194,21 +198,6 @@ bool SegmentationModule::handleKeyPress(QKeyEvent* event)
         }
     }
 
-    if (!event->isAutoRepeat()) {
-        const bool undoRequested =
-            event->matches(vc3d::keybinds::standard::Undo) ||
-            (event->key() == vc3d::keybinds::keypress::SegmentationUndo.key &&
-             (event->modifiers() & vc3d::keybinds::keypress::SegmentationUndo.modifiers) ==
-                 vc3d::keybinds::keypress::SegmentationUndo.modifiers);
-        if (undoRequested) {
-            if (restoreUndoSnapshot()) {
-                emit statusMessageRequested(tr("Undid last segmentation change."), kStatusShort);
-                event->accept();
-                return true;
-            }
-            return false;
-        }
-    }
 
     if (event->key() == vc3d::keybinds::keypress::LineDrawHold.key && !event->isAutoRepeat()) {
         if (_editingEnabled && !_growthInProgress && _editManager && _editManager->hasSession()) {

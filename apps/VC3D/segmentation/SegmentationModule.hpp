@@ -336,6 +336,7 @@ private:
     bool finishPointGrow(bool apply);
     bool clearManualAddPending();
     bool undoManualAddPlaneConstraint();
+    bool redoManualAdd();
     bool handleManualAddMousePress(VolumeViewerBase* viewer,
                                    const cv::Vec3f& worldPos,
                                    Qt::MouseButton button,
@@ -375,7 +376,7 @@ private:
     [[nodiscard]] bool captureUndoSnapshot();
     [[nodiscard]] bool captureUndoDelta();  // Capture delta from current edited vertices
     void discardLastUndoSnapshot();
-    bool restoreUndoSnapshot();
+    bool restoreUndoSnapshot(bool redo = false);
     void clearUndoStack();
 
     [[nodiscard]] float gridStepWorld() const;
@@ -483,6 +484,7 @@ private:
     QColor _approvalBrushColor{0, 255, 0};  // RGB color for approval painting
 
     segmentation::UndoHistory _undoHistory;
+    segmentation::UndoHistory _redoHistory;
     bool _suppressUndoCapture{false};
 
     static constexpr int kAutosaveIntervalMs = 10000;

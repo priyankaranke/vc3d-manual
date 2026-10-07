@@ -23,7 +23,7 @@ double distanceToLine(cv::Point p, cv::Point a, cv::Point b) {
 }
 
 void PointGrowTool::clear() {
-    _points.release(); _original.release(); _anchors.clear(); _undo.clear(); _offset = {};
+    _points.release(); _original.release(); _anchors.clear(); _undo.clear(); _redo.clear(); _offset = {};
 }
 
 bool PointGrowTool::begin(const cv::Mat_<cv::Vec3f>& points) {
@@ -44,10 +44,11 @@ void PointGrowTool::pad(int amount) {
     const cv::Point delta(amount, amount);
     _offset += delta;
     for (auto& a : _anchors) a.grid += delta;
-    for (auto& u : _undo) {
-        for (auto& c : u.changes) c.grid += delta;
-        for (auto& a : u.anchors) a.grid += delta;
-    }
+    for (auto* history : {&_undo, &_redo})
+        for (auto& u : *history) {
+            for (auto& c : u.changes) c.grid += delta;
+            for (auto& a : u.anchors) a.grid += delta;
+        }
 }
 
 bool PointGrowTool::addPoint(const cv::Vec3f& world, int width, std::string& status) {
@@ -216,14 +217,16 @@ bool PointGrowTool::addPoint(const cv::Vec3f& world, int width, std::string& sta
     }
     _anchors.erase(std::remove_if(_anchors.begin(),_anchors.end(),[&](const Anchor& a){return a.grid==target;}),_anchors.end());
     _anchors.push_back({target,world}); _undo.push_back(std::move(undo));
+    _redo.clear();
     committed = true;
     status = touchUp
-        ? "Surface corrected at this point. Click to continue; Undo removes the last click; Apply saves."
-        : "Point added. Click to continue; Undo removes the last click; Apply saves.";
+        ? "Surface corrected. Changes save automatically; Cmd/Ctrl+Z undoes, Cmd/Ctrl+Shift+Z redoes."
+        : "Point added. Changes save automatically; Cmd/Ctrl+Z undoes, Cmd/Ctrl+Shift+Z redoes.";
     return true;
 }
 
-bool PointGrowTool::adoptPreview(const cv::Mat_<cv::Vec3f>& points) {
+bool PointGrowTool::adoptPreview(const cv::Mat_<cv::Vec3f>& points, bool* changed) {
+    if (changed) *changed = false;
     if (!active() || points.size() != _points.size()) return false;
     Undo undo; undo.anchors = _anchors;
     for (int r=0;r<points.rows;++r) for (int c=0;c<points.cols;++c) {
@@ -233,19 +236,28 @@ bool PointGrowTool::adoptPreview(const cv::Mat_<cv::Vec3f>& points) {
         undo.changes.push_back({{c,r},_points(r,c)});
     }
     if (undo.changes.empty()) return true;
+    if (changed) *changed = true;
     points.copyTo(_points);
     // An intentional brush stroke moves old click constraints with the sheet.
     for (auto& anchor : _anchors) anchor.world = _points(anchor.grid);
     _undo.push_back(std::move(undo));
+    _redo.clear();
     return true;
 }
 
-bool PointGrowTool::undo() {
-    if (_undo.empty()) return false;
-    auto u=std::move(_undo.back()); _undo.pop_back();
-    for (const auto& c:u.changes) _points(c.grid)=c.before;
-    _anchors=std::move(u.anchors); return true;
+bool PointGrowTool::moveHistory(std::vector<Undo>& from, std::vector<Undo>& to) {
+    if (from.empty()) return false;
+    auto entry=std::move(from.back()); from.pop_back();
+    // Swap the exact values instead of rerunning the fit/brush. This also
+    // preserves constraints and invalid cells after a grid expansion.
+    for (auto& c:entry.changes) std::swap(_points(c.grid),c.before);
+    _anchors.swap(entry.anchors);
+    to.push_back(std::move(entry));
+    return true;
 }
+
+bool PointGrowTool::undo() { return moveHistory(_undo,_redo); }
+bool PointGrowTool::redo() { return moveHistory(_redo,_undo); }
 
 std::vector<PointGrowTool::GridKey> PointGrowTool::changedVertices() const {
     std::vector<GridKey> result;

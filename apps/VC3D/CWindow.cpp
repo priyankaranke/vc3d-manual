@@ -7206,7 +7206,7 @@ void CWindow::CreateWidgets(void)
     });
     manualRow->addWidget(viewOnly);
     manualRow->addSpacing(8);
-    auto* help = new QLabel(tr("Autosave · Click CT: add/edit · A/D: push/pull · Q/E: radius · R: focus · Cmd/Ctrl+Z: undo"),ui.tabSegment);
+    auto* help = new QLabel(tr("Autosave · Click CT: add/edit · A/D: push/pull · Q/E: radius · R: focus · Cmd/Ctrl+Z: undo · Cmd/Ctrl+Shift+Z: redo"),ui.tabSegment);
     manualRow->addWidget(help);
     manualRow->addStretch();
     aWidgetLayout->addLayout(manualRow);

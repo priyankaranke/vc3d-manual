@@ -48,8 +48,14 @@ TEST_CASE("continued growth expands padding and undo restores every original poi
         originalUnchanged(tool,p);
     }
     REQUIRE(tool.offset().x>16);
+    const auto grown=tool.points().clone();
+    const auto anchors=tool.anchors();
     for(int i=0;i<15;++i) REQUIRE(tool.undo());
     REQUIRE(tool.changedVertices().empty()); originalUnchanged(tool,p);
+    for(int i=0;i<15;++i) REQUIRE(tool.redo());
+    REQUIRE(cv::norm(tool.points(),grown,cv::NORM_INF)==0);
+    REQUIRE(tool.anchors()==anchors);
+    REQUIRE_FALSE(tool.redo());
 }
 
 TEST_CASE("holes are filled locally and distant clicks leave the surface unchanged") {
@@ -143,6 +149,49 @@ TEST_CASE("brush strokes share undo with clicks and move their existing constrai
     REQUIRE(tool.undo()); REQUIRE(cv::norm(tool.points(),afterClick,cv::NORM_INF)==0);
     REQUIRE(tool.anchors().back()==firstAnchor);
     REQUIRE(tool.undo()); REQUIRE(tool.changedVertices().empty());
+}
+
+TEST_CASE("four mixed clicks and strokes redo exactly and new edits replace the redo branch") {
+    PointGrowTool tool; REQUIRE(tool.begin(plane())); std::string status;
+    std::vector<cv::Mat_<cv::Vec3f>> states{tool.points().clone()};
+    std::vector<std::vector<cv::Vec3f>> anchors{tool.anchors()};
+    for (int i=0;i<2;++i) {
+        REQUIRE_MESSAGE(tool.addPoint({1280.f+60*i,1100,1002.f+3*i},2,status),status);
+        states.push_back(tool.points().clone()); anchors.push_back(tool.anchors());
+        auto brushed=tool.points().clone();
+        for (int r=0;r<brushed.rows;++r) for (int c=0;c<brushed.cols;++c)
+            if (brushed(r,c)[0]>=0) brushed(r,c)[2]+=3;
+        bool changed=false;
+        REQUIRE(tool.adoptPreview(brushed,&changed)); REQUIRE(changed);
+        states.push_back(tool.points().clone()); anchors.push_back(tool.anchors());
+    }
+    for (int i=3;i>=0;--i) {
+        REQUIRE(tool.undo());
+        REQUIRE(cv::norm(tool.points(),states[i],cv::NORM_INF)==0);
+        REQUIRE(tool.anchors()==anchors[i]);
+    }
+    REQUIRE_FALSE(tool.undo()); REQUIRE_FALSE(tool.changed());
+    for (int i=1;i<=4;++i) {
+        REQUIRE(tool.redo());
+        REQUIRE(cv::norm(tool.points(),states[i],cv::NORM_INF)==0);
+        REQUIRE(tool.anchors()==anchors[i]);
+    }
+    REQUIRE_FALSE(tool.redo());
+    REQUIRE(tool.undo());
+    // A rejected click or an unmoved stroke must not discard redo.
+    REQUIRE_FALSE(tool.addPoint({9000,9000,9000},2,status));
+    bool changed=true;
+    REQUIRE(tool.adoptPreview(tool.points(),&changed)); REQUIRE_FALSE(changed);
+    REQUIRE(tool.redo());
+    REQUIRE(cv::norm(tool.points(),states.back(),cv::NORM_INF)==0);
+    REQUIRE(tool.undo());
+    auto different=tool.points().clone();
+    different(21,21)[2]+=1;
+    REQUIRE(tool.adoptPreview(different));
+    REQUIRE_FALSE(tool.redo());
+    REQUIRE(tool.undo()); REQUIRE(tool.redo());
+    REQUIRE(cv::norm(tool.points(),different,cv::NORM_INF)==0);
+    tool.clear(); REQUIRE_FALSE(tool.redo());
 }
 
 TEST_CASE("surface preview never interpolates invalid sentinel borders into CT") {

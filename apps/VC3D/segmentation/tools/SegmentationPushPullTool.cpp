@@ -621,9 +621,11 @@ void SegmentationPushPullTool::stopAll(bool finishPendingAlpha)
     // Finalize the edits and trigger final surface update
     if (wasActive && _editManager && _editManager->hasSession() && _module._pointGrowTool.active()) {
         _editManager->commitActiveDrag();
-        if (!_module._pointGrowTool.adoptPreview(_editManager->previewPoints())) {
+        bool changed = false;
+        if (!_module._pointGrowTool.adoptPreview(_editManager->previewPoints(), &changed)) {
             emit _module.statusMessageRequested(QStringLiteral("Push/pull could not preserve the chart; stroke reverted."), kStatusMedium);
         }
+        if (changed) _module._redoHistory.clear();
         _module.publishPointGrowPreview();
     } else if (wasActive && _editManager && _editManager->hasSession() && _state) {
         const auto editedVerts = _editManager->editedVertices();

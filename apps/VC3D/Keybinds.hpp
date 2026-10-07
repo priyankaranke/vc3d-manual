@@ -59,6 +59,7 @@ extern const KeyPressDef ApprovalPaintToggle;
 extern const KeyPressDef UnapprovalPaintToggle;
 extern const KeyPressDef ApprovalUndo;
 extern const KeyPressDef SegmentationUndo;
+extern const KeyPressDef SegmentationRedo;
 extern const KeyPressDef ManualAddToggle;
 extern const KeyPressDef LineDrawHold;
 extern const KeyPressDef ToggleLastGrowthOverlay;
@@ -94,6 +95,7 @@ extern const KeyPressDef PageUp;
 
 namespace standard {
 constexpr QKeySequence::StandardKey Undo = QKeySequence::Undo;
+constexpr QKeySequence::StandardKey Redo = QKeySequence::Redo;
 constexpr QKeySequence::StandardKey Open = QKeySequence::Open;
 } // namespace standard
 

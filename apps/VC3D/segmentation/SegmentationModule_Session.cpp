@@ -176,7 +176,9 @@ bool SegmentationModule::captureUndoSnapshot()
         return false;
     }
 
-    return _undoHistory.capture(previewPoints);
+    const bool captured = _undoHistory.capture(previewPoints);
+    if (captured) _redoHistory.clear();
+    return captured;
 }
 
 bool SegmentationModule::captureUndoDelta()
@@ -200,7 +202,9 @@ bool SegmentationModule::captureUndoDelta()
         deltas.push_back({edit.row, edit.col, edit.originalWorld});
     }
 
-    return _undoHistory.captureDelta(deltas);
+    const bool captured = _undoHistory.captureDelta(deltas);
+    if (captured) _redoHistory.clear();
+    return captured;
 }
 
 void SegmentationModule::discardLastUndoSnapshot()
@@ -208,7 +212,7 @@ void SegmentationModule::discardLastUndoSnapshot()
     _undoHistory.discardLast();
 }
 
-bool SegmentationModule::restoreUndoSnapshot()
+bool SegmentationModule::restoreUndoSnapshot(bool redo)
 {
     if (_viewOnly) return false;
     if (_suppressUndoCapture || _growthInProgress) {
@@ -218,7 +222,9 @@ bool SegmentationModule::restoreUndoSnapshot()
         return false;
     }
 
-    if (_undoHistory.empty()) {
+    auto& history = redo ? _redoHistory : _undoHistory;
+    auto& inverseHistory = redo ? _undoHistory : _redoHistory;
+    if (history.empty()) {
         return false;
     }
 
@@ -228,19 +234,24 @@ bool SegmentationModule::restoreUndoSnapshot()
     std::optional<cv::Rect> undoBounds;
     std::vector<SegmentationEditManager::VertexEdit> autosaveEdits;
     const bool editingWasEnabled = _editingEnabled;
+    std::shared_ptr<QuadSurface> inverseSurface;
+    cv::Mat_<cv::Vec3f> inversePoints;
+    std::vector<segmentation::VertexDelta> inverseDeltas;
 
-    if (_undoHistory.lastIsSurface()) {
-        auto snapshot = _undoHistory.takeLastSurface();
+    if (history.lastIsSurface()) {
+        auto snapshot = history.takeLastSurface();
         const auto restoredSurface = _editManager->baseSurface();
         if (snapshot && restoredSurface) {
             auto* restoredPoints = restoredSurface->rawPointsPtr();
             if (restoredPoints) {
-                const auto& currentMeta = restoredSurface->meta;
+                inverseSurface = segmentation::snapshotSurface(*restoredSurface);
+                const auto& currentMeta = redo ? snapshot->meta : restoredSurface->meta;
                 if (restoredPoints->size() != snapshot->rawPointsPtr()->size() &&
                     currentMeta.contains("grid_offset") && currentMeta["grid_offset"].is_array() &&
                     currentMeta["grid_offset"].size() == 2) {
-                    applyCorrectionAnchorOffset(-currentMeta["grid_offset"][0].get_float(),
-                                                -currentMeta["grid_offset"][1].get_float());
+                    const float sign = redo ? 1.0f : -1.0f;
+                    applyCorrectionAnchorOffset(sign * currentMeta["grid_offset"][0].get_float(),
+                                                sign * currentMeta["grid_offset"][1].get_float());
                     saveCorrectionPoints(restoredSurface->path);
                 }
                 segmentation::restoreSurface(*restoredSurface, *snapshot);
@@ -256,11 +267,11 @@ bool SegmentationModule::restoreUndoSnapshot()
             }
         }
         if (!applied) {
-            _undoHistory.pushBackSurface(std::move(snapshot));
+            history.pushBackSurface(std::move(snapshot));
         }
-    } else if (_undoHistory.lastIsDelta()) {
+    } else if (history.lastIsDelta()) {
         // Check if this is a delta-based entry or a legacy point snapshot.
-        auto deltas = _undoHistory.takeLastDelta();
+        auto deltas = history.takeLastDelta();
         if (deltas && !deltas->empty()) {
             // Apply deltas to restore previous positions
             auto& previewPoints = _editManager->previewPointsMutable();
@@ -269,6 +280,7 @@ bool SegmentationModule::restoreUndoSnapshot()
 
             for (const auto& delta : *deltas) {
                 if (delta.row >= 0 && delta.row < previewPoints.rows && delta.col >= 0 && delta.col < previewPoints.cols) {
+                    inverseDeltas.push_back({delta.row, delta.col, previewPoints(delta.row, delta.col)});
                     previewPoints(delta.row, delta.col) = delta.previousWorld;
                     autosaveEdits.push_back({delta.row, delta.col, {}, delta.previousWorld, false});
                     minRow = std::min(minRow, delta.row);
@@ -290,18 +302,23 @@ bool SegmentationModule::restoreUndoSnapshot()
         }
     } else {
         // Legacy full snapshot restore
-        auto state = _undoHistory.takeLast();
+        auto state = history.takeLast();
         if (state && !state->empty()) {
+            inversePoints = _editManager->previewPoints().clone();
             applied = _editManager->setPreviewPoints(*state, false, &undoBounds);
             if (applied) {
                 _editManager->applyPreview();
             } else {
-                _undoHistory.pushBack(std::move(*state));
+                history.pushBack(std::move(*state));
             }
         }
     }
 
     if (applied) {
+        if (inverseSurface) inverseHistory.captureSurface(std::move(inverseSurface));
+        else if (!inverseDeltas.empty()) inverseHistory.captureDelta(inverseDeltas);
+        else inverseHistory.pushBack(std::move(inversePoints));
+
         auto restoredSurface = _editManager->previewSurface();
         if (restoredSurface) {
             restoredSurface->invalidateCache();
@@ -343,7 +360,7 @@ bool SegmentationModule::restoreUndoSnapshot()
         }
 
         // Also undo the corresponding auto-approval if approval mask is active
-        if (_overlay && _overlay->hasApprovalMaskData() && _overlay->canUndoAutoApproval()) {
+        if (!redo && _overlay && _overlay->hasApprovalMaskData() && _overlay->canUndoAutoApproval()) {
             _overlay->undoLastAutoApproval();
             // Schedule save to persist the undo
             if (_editManager && _editManager->baseSurface()) {
@@ -364,6 +381,7 @@ bool SegmentationModule::restoreUndoSnapshot()
 void SegmentationModule::clearUndoStack()
 {
     _undoHistory.clear();
+    _redoHistory.clear();
 }
 
 bool SegmentationModule::hasActiveSession() const
@@ -392,7 +410,9 @@ bool SegmentationModule::captureUndoSnapshotForGrowth()
         return false;
     }
 
-    return _undoHistory.captureSurface(segmentation::snapshotSurface(*surface));
+    const bool captured = _undoHistory.captureSurface(segmentation::snapshotSurface(*surface));
+    if (captured) _redoHistory.clear();
+    return captured;
 }
 
 void SegmentationModule::refreshSessionFromSurface(QuadSurface* surface)

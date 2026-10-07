@@ -257,9 +257,17 @@ const KeyPressDef SegmentationUndo{
 const KeyPressDef ManualAddToggle{
     "manual_add_toggle",
     kSectionSegEditing,
-    "Toggle Manual Add mode",
+    "Toggle view-only mode",
     Qt::Key_E,
     Qt::ShiftModifier,
+    true
+};
+const KeyPressDef SegmentationRedo{
+    "segmentation_redo",
+    kSectionSegEditing,
+    "Redo last segmentation change",
+    Qt::Key_Z,
+    Qt::ControlModifier | Qt::ShiftModifier,
     true
 };
 const KeyPressDef LineDrawHold{
@@ -519,6 +527,7 @@ QString buildKeybindsHelpText()
         { kSectionSurfaceTags, shortcuts::ApplyDefectiveTag.description, HelpKeyType::Shortcut, &shortcuts::ApplyDefectiveTag, nullptr, nullptr },
 
         { kSectionSegEditing, keypress::SegmentationUndo.description, HelpKeyType::KeyPress, nullptr, &keypress::SegmentationUndo, nullptr },
+        { kSectionSegEditing, keypress::SegmentationRedo.description, HelpKeyType::KeyPress, nullptr, &keypress::SegmentationRedo, nullptr },
         { kSectionSegEditing, keypress::ManualAddToggle.description, HelpKeyType::KeyPress, nullptr, &keypress::ManualAddToggle, nullptr },
         { kSectionSegEditing, keypress::LineDrawHold.description, HelpKeyType::KeyPress, nullptr, &keypress::LineDrawHold, nullptr },
         { kSectionSegEditing, keypress::ToggleAnnotation.description, HelpKeyType::KeyPress, nullptr, &keypress::ToggleAnnotation, nullptr },

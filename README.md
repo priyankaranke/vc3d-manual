@@ -46,7 +46,9 @@ CT cross sections remain single slices so clicks have an exact depth.
   also exposes radius, Gaussian falloff, and step size. Each held stroke is one
   undo operation and saves automatically when released.
 - **Ctrl/Cmd+Z:** undo the last click or stroke and automatically save the restored
-  geometry. **View only / Shift+E:** pause CT clicks and A/D without losing edits
+  geometry. **Ctrl/Cmd+Shift+Z:** redo the last undone click or stroke exactly,
+  including its anchors, and autosave it. A new edit clears the redo branch.
+  **View only / Shift+E:** pause CT clicks and A/D without losing edits
   or Undo history. **Escape:** stop a held stroke; editing remains available.
   Closing the app waits for the final save.
 - **R** while hovering: center linked CT slices at that location. **Right-drag:**

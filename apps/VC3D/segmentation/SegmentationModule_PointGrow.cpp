@@ -77,6 +77,20 @@ bool SegmentationModule::finishPointGrow(bool apply)
     if (_pushPullTool) _pushPullTool->stopAll(false);
     auto surface = _editManager->baseSurface();
     if (!surface) return false;
+    if (apply) {
+        // Keep undone clicks/strokes when crossing into the older session
+        // history. Redo remains ordered even after restoring an unpadded chart.
+        std::vector<std::shared_ptr<QuadSurface>> nextStates;
+        while (nextStates.size() < 20 && _pointGrowTool.redo()) {
+            auto next = segmentation::snapshotSurface(*surface);
+            _pointGrowTool.points().copyTo(*next->rawPointsPtr());
+            next->invalidateCache();
+            nextStates.push_back(std::move(next));
+        }
+        for (size_t i = 0; i < nextStates.size(); ++i) _pointGrowTool.undo();
+        for (auto it = nextStates.rbegin(); it != nextStates.rend(); ++it)
+            _redoHistory.captureSurface(*it);
+    }
     if (apply && _pointGrowTool.changed()) {
         // Keep individual click/stroke undo after leaving the tool. The oldest
         // state also restores the original chart dimensions and channels.
