@@ -7156,7 +7156,7 @@ void CWindow::CreateWidgets(void)
     auto* addPoints = new QPushButton(tr("Add points · Shift+E"), ui.tabSegment);
     addPoints->setObjectName(QStringLiteral("directPointGrowButton"));
     addPoints->setCheckable(true);
-    addPoints->setToolTip(tr("Click a sheet in XY, XZ or YZ to extend the active surface. Escape cancels."));
+    addPoints->setToolTip(tr("Click in XY, XZ or YZ: beyond an edge grows the sheet; on existing geometry corrects it locally. Escape cancels."));
     connect(addPoints, &QPushButton::clicked, this, [this,addPoints]() {
         if (_segmentationModule) _segmentationModule->toggleManualAdd();
         addPoints->setChecked(_segmentationModule && _segmentationModule->manualAddMode());
@@ -7190,7 +7190,7 @@ void CWindow::CreateWidgets(void)
         if (const auto* focus = _state->poi("focus")) recenterPlaneViewersOn(focus->p);
     });
     manualRow->addWidget(focusPatch);
-    auto* help = new QLabel(tr("Click CT: add   ·   R: center slices   ·   Ctrl/Cmd+Z: undo   ·   Esc: cancel"),ui.tabSegment);
+    auto* help = new QLabel(tr("Click CT: grow / touch up   ·   R: center slices   ·   Ctrl/Cmd+Z: undo   ·   Esc: cancel"),ui.tabSegment);
     manualRow->addWidget(help);
     manualRow->addStretch();
     aWidgetLayout->addLayout(manualRow);

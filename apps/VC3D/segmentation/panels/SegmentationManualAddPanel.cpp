@@ -27,12 +27,12 @@ SegmentationManualAddPanel::SegmentationManualAddPanel(const QString& settingsGr
 
     auto* group = new QGroupBox(tr("Manual Add"), this);
     auto* layout = new QVBoxLayout(group);
-    auto* help = new QLabel(tr("Shift+E starts or applies. Click the sheet in XY, XZ or YZ to extend it. "
+    auto* help = new QLabel(tr("Shift+E starts or applies. Click in XY, XZ or YZ: beyond an edge extends the sheet; on existing geometry corrects it locally. "
                               "Ctrl/Cmd+Z undoes a click; Escape cancels. Right-drag pans; Shift+scroll slices; scroll zooms. "
                               "Hover and press R to center all CT slices at that point."), group);
     help->setWordWrap(true);
     layout->addWidget(help);
-    _directCT = new QCheckBox(tr("Grow directly from CT clicks"), group);
+    _directCT = new QCheckBox(tr("Grow and touch up directly from CT clicks"), group);
     _directCT->setChecked(true);
     layout->addWidget(_directCT);
     _stripWidth = new QSpinBox(group);
@@ -40,7 +40,7 @@ SegmentationManualAddPanel::SegmentationManualAddPanel(const QString& settingsGr
     _stripWidth->setValue(2);
     _stripWidth->setSuffix(tr(" grid steps"));
     auto* simpleForm = new QFormLayout();
-    simpleForm->addRow(tr("Extension half-width"), _stripWidth);
+    simpleForm->addRow(tr("Edit half-width"), _stripWidth);
     layout->addLayout(simpleForm);
     auto* advancedToggle = new QPushButton(tr("Advanced hole-fill settings"), group);
     advancedToggle->setCheckable(true);

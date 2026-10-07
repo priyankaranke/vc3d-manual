@@ -5,6 +5,7 @@
 #include <limits>
 #include <map>
 #include <functional>
+#include <set>
 
 namespace {
 bool valid(const cv::Vec3f& p) {
@@ -99,54 +100,73 @@ bool PointGrowTool::addPoint(const cv::Vec3f& world, int width, std::string& sta
         status = "Click closer to the edge (within 12 grid steps), then continue outward."; return false;
     }
     cv::Point target = nearest + cv::Point(std::lround(dc), std::lround(dr));
-    if (inside(_original, target) && valid(_original(target))) {
-        status = "Original geometry stays fixed. Click just beyond its edge or into a hole."; return false;
-    }
+    const bool touchUp = inside(_original, target) && valid(_original(target));
     if (target.x < width + 4 || target.y < width + 4 ||
         target.x >= _points.cols - width - 4 || target.y >= _points.rows - width - 4) {
         beforePadding = *this;
         pad(16); nearest += cv::Point(16,16); target += cv::Point(16,16);
     }
 
-    const cv::Rect region(std::min(nearest.x,target.x)-width, std::min(nearest.y,target.y)-width,
-                         std::abs(nearest.x-target.x)+2*width+1, std::abs(nearest.y-target.y)+2*width+1);
-    std::vector<cv::Point> fill;
-    for (int r = region.y; r < region.br().y; ++r) for (int c = region.x; c < region.br().x; ++c) {
-        cv::Point p(c,r);
-        if (!inside(_points,p) || valid(_original(p))) continue;
-        // New strips attach to the existing grid; a correction only refits a
-        // small neighbourhood of a point added in this session.
-        if (distanceToLine(p,nearest,target) <= width &&
-            (!valid(_points(p)) || cv::norm(p-target) <= width)) fill.push_back(p);
-    }
-    if (fill.empty()) { status = "No new surface cells at this point."; return false; }
-    std::map<std::pair<int,int>, ThinPlateSpline3d::Sample> samples;
-    auto sample = [&](cv::Point p, cv::Vec3f w) {
-        samples[{p.y,p.x}] = {cv::Point2d(p),cv::Vec3d(w)};
-    };
-    // Bound the fit, not the number of original vertices preserved. All original
-    // XYZ values are copied verbatim; interpolation only writes the small strip.
-    std::vector<cv::Point> candidates;
-    for (int r = region.y-3; r < region.br().y+3; ++r) for (int c = region.x-3; c < region.br().x+3; ++c) {
-        cv::Point p(c,r);
-        if (!inside(_points,p) || !valid(_points(p))) continue;
-        if (valid(_original(p)) || cv::norm(p-target) > width) candidates.push_back(p);
-    }
-    if (candidates.size() > 64) {
-        for (size_t i=0; i<64; ++i) { const auto p=candidates[i*candidates.size()/64]; sample(p,_points(p)); }
-    } else for (auto p : candidates) sample(p,_points(p));
-    for (const auto& anchor : _anchors) if (cv::norm(anchor.grid-target) < 18) sample(anchor.grid,anchor.world);
-    sample(target,world);
-    std::vector<ThinPlateSpline3d::Sample> fitSamples;
-    for (const auto& entry : samples) fitSamples.push_back(entry.second);
-    ThinPlateSpline3d tps;
-    if (!tps.fit(fitSamples,0.0)) { status = "Cannot fit this extension; click nearer the existing edge."; return false; }
-
     std::map<std::pair<int,int>,cv::Vec3f> proposed;
-    for (auto p : fill) {
-        auto value = tps.evaluate(cv::Point2d(p));
-        if (!value || !valid(*value)) { status = "Extension leaves the CT coordinate range."; return false; }
-        proposed[{p.y,p.x}] = *value;
+    if (touchUp) {
+        // An occupied chart location is a local correction, not a rejected
+        // grow click. Apply a compact, smooth displacement to connected vertices
+        // only; holes and the rest of the imported chart remain untouched.
+        const cv::Vec3f displacement = world - _points(target);
+        const double radius = width + 1;
+        std::vector<cv::Point> pending{target};
+        std::set<std::pair<int,int>> visited{{target.y,target.x}};
+        for (size_t i = 0; i < pending.size(); ++i) {
+            const auto p = pending[i];
+            const double t = cv::norm(p-target) / radius;
+            const double falloff = std::pow(1-t,4) * (1+4*t);
+            proposed[{p.y,p.x}] = _points(p) + static_cast<float>(falloff) * displacement;
+            for (auto delta : {cv::Point(1,0),cv::Point(-1,0),cv::Point(0,1),cv::Point(0,-1)}) {
+                const auto q = p + delta;
+                if (inside(_points,q) && valid(_points(q)) && cv::norm(q-target) < radius &&
+                    visited.emplace(q.y,q.x).second) pending.push_back(q);
+            }
+        }
+    } else {
+        const cv::Rect region(std::min(nearest.x,target.x)-width, std::min(nearest.y,target.y)-width,
+                             std::abs(nearest.x-target.x)+2*width+1, std::abs(nearest.y-target.y)+2*width+1);
+        std::vector<cv::Point> fill;
+        for (int r = region.y; r < region.br().y; ++r) for (int c = region.x; c < region.br().x; ++c) {
+            cv::Point p(c,r);
+            if (!inside(_points,p) || valid(_original(p))) continue;
+            // New strips attach to the existing grid; a correction only refits a
+            // small neighbourhood of a point added in this session.
+            if (distanceToLine(p,nearest,target) <= width &&
+                (!valid(_points(p)) || cv::norm(p-target) <= width)) fill.push_back(p);
+        }
+        if (fill.empty()) { status = "No new surface cells at this point."; return false; }
+        std::map<std::pair<int,int>, ThinPlateSpline3d::Sample> samples;
+        auto sample = [&](cv::Point p, cv::Vec3f w) {
+            samples[{p.y,p.x}] = {cv::Point2d(p),cv::Vec3d(w)};
+        };
+        // Bound the fit, not the number of original vertices preserved. All original
+        // XYZ values are copied verbatim; interpolation only writes the small strip.
+        std::vector<cv::Point> candidates;
+        for (int r = region.y-3; r < region.br().y+3; ++r) for (int c = region.x-3; c < region.br().x+3; ++c) {
+            cv::Point p(c,r);
+            if (!inside(_points,p) || !valid(_points(p))) continue;
+            if (valid(_original(p)) || cv::norm(p-target) > width) candidates.push_back(p);
+        }
+        if (candidates.size() > 64) {
+            for (size_t i=0; i<64; ++i) { const auto p=candidates[i*candidates.size()/64]; sample(p,_points(p)); }
+        } else for (auto p : candidates) sample(p,_points(p));
+        for (const auto& anchor : _anchors) if (cv::norm(anchor.grid-target) < 18) sample(anchor.grid,anchor.world);
+        sample(target,world);
+        std::vector<ThinPlateSpline3d::Sample> fitSamples;
+        for (const auto& entry : samples) fitSamples.push_back(entry.second);
+        ThinPlateSpline3d tps;
+        if (!tps.fit(fitSamples,0.0)) { status = "Cannot fit this extension; click nearer the existing edge."; return false; }
+
+        for (auto p : fill) {
+            auto value = tps.evaluate(cv::Point2d(p));
+            if (!value || !valid(*value)) { status = "Extension leaves the CT coordinate range."; return false; }
+            proposed[{p.y,p.x}] = *value;
+        }
     }
     proposed[{target.y,target.x}] = world;
     for (const auto& anchor : _anchors) {
@@ -161,6 +181,7 @@ bool PointGrowTool::addPoint(const cv::Vec3f& world, int width, std::string& sta
     // creating geometry that a downstream unwrap cannot use.
     for (const auto& [key,value] : proposed) {
         cv::Point p(key.second,key.first);
+        if (!valid(value)) { status = "That correction leaves the CT coordinate range."; return false; }
         for (auto delta : {cv::Point(1,0),cv::Point(-1,0),cv::Point(0,1),cv::Point(0,-1)}) {
             auto q=at(p+delta); if (!valid(q)) continue;
             const double length=cv::norm(q-value), expected=delta.x ? std::sqrt(uu) : std::sqrt(vv);
@@ -172,9 +193,19 @@ bool PointGrowTool::addPoint(const cv::Vec3f& world, int width, std::string& sta
             cv::Point o=p+cv::Point(x,y);
             auto p0=at(o), p1=at(o+cv::Point(1,0)), p2=at(o+cv::Point(0,1)), p3=at(o+cv::Point(1,1));
             if (!valid(p0)||!valid(p1)||!valid(p2)||!valid(p3)) continue;
-            if (cv::Vec3d((p1-p0).cross(p2-p0)).dot(normal) <= 0 ||
-                cv::Vec3d((p3-p1).cross(p2-p1)).dot(normal) <= 0) {
-                status = "That extension would fold the surface. Add a closer point along the sheet."; return false;
+            auto n0 = normal, n1 = normal;
+            if (touchUp) {
+                // A curved imported chart need not share one tangent plane.
+                // Prevent each existing triangle from flipping relative to its
+                // own orientation before this click.
+                const auto q0=_points(o), q1=_points(o+cv::Point(1,0));
+                const auto q2=_points(o+cv::Point(0,1)), q3=_points(o+cv::Point(1,1));
+                n0=cv::Vec3d((q1-q0).cross(q2-q0));
+                n1=cv::Vec3d((q3-q1).cross(q2-q1));
+            }
+            if (cv::Vec3d((p1-p0).cross(p2-p0)).dot(n0) <= 0 ||
+                cv::Vec3d((p3-p1).cross(p2-p1)).dot(n1) <= 0) {
+                status = "That point would fold the surface. Add a closer point along the sheet."; return false;
             }
         }
     }
@@ -186,7 +217,9 @@ bool PointGrowTool::addPoint(const cv::Vec3f& world, int width, std::string& sta
     _anchors.erase(std::remove_if(_anchors.begin(),_anchors.end(),[&](const Anchor& a){return a.grid==target;}),_anchors.end());
     _anchors.push_back({target,world}); _undo.push_back(std::move(undo));
     committed = true;
-    status = "Point added. Click to continue; Undo removes the last click; Apply saves.";
+    status = touchUp
+        ? "Surface corrected at this point. Click to continue; Undo removes the last click; Apply saves."
+        : "Point added. Click to continue; Undo removes the last click; Apply saves.";
     return true;
 }
 

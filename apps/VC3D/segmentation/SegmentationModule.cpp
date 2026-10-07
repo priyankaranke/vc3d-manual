@@ -2154,7 +2154,7 @@ bool SegmentationModule::beginManualAdd()
     _manualAddHoverThrottle.invalidate();
     _widget->setManualAddActive(true);
     refreshOverlay();
-    emit statusMessageRequested(tr("Click the sheet in a CT view to extend it. Shift+E applies; Escape cancels."), kStatusShort);
+    emit statusMessageRequested(tr("Click CT to grow beyond an edge or touch up existing geometry. Shift+E applies; Escape cancels."), kStatusShort);
     return true;
 }
 

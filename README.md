@@ -37,21 +37,25 @@ offsets −1, 0, +1, +2 and contrast 0–200. The interactive preview rejects ce
 touching invalid XYZ instead of blending the invalid sentinel into unrelated CT.
 CT cross sections remain single slices so clicks have an exact depth.
 
-- **Add points / Shift+E:** enter direct CT extension; click just beyond the
-  existing edge or inside a hole in any CT pane. Each click immediately updates
-  the surface geometry and preview. **Apply points / Shift+E** saves the edit.
+- **Add points / Shift+E:** start editing in any CT pane. Click beyond an edge
+  or in a hole to extend the sheet; click on existing geometry to correct it
+  locally. Each click immediately updates the surface geometry and preview.
+  **Apply points / Shift+E** saves the edit.
 - **Ctrl/Cmd+Z:** undo the last click. **Escape:** cancel the entire uncommitted
   extension and restore the original surface and channels.
 - **R** while hovering: center linked CT slices at that location. **Right-drag:**
   pan. **Wheel:** zoom. **Shift+wheel:** move through CT slices.
-- The Manual Add panel exposes extension width; legacy hole-fill controls remain
+- The Manual Add panel exposes edit width; legacy hole-fill controls remain
   under **Advanced hole-fill settings**.
 
-The local thin-plate fit writes only new grid points, pins clicked points, and
-preserves original XYZ values and scale exactly. Padding translates ancillary
+Extensions use a local thin-plate fit and retain existing XYZ values. Touch-ups
+move the clicked vertex exactly onto the CT point, with a smooth displacement
+of its connected neighbours that fades to zero within the edit width plus one
+grid step. Other clicked anchors remain pinned; holes and distant vertices are
+unchanged. The native chart scale is retained. Padding translates ancillary
 channels and correction anchors without image resizing. Overstretched or folded
-extensions are rejected; grow in short steps (at most 12 grid steps per click).
-This does not automatically trace the tissue or alter existing surface vertices.
+edits are rejected; grow in short steps (at most 12 grid steps per click).
+This does not automatically trace the tissue.
 Applied edits use VC3D's normal atomic tifxyz saving and whole-edit undo.
 
 The saved segment is native geometry for the Will/VC3D pipeline. New production

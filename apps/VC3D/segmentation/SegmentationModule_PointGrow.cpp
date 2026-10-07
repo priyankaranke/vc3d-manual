@@ -77,14 +77,14 @@ bool SegmentationModule::finishPointGrow(bool apply)
         // A complete snapshot is required because the grid and ancillary
         // channels may have grown. The ordinary atomic tifxyz save runs async.
         markAutosaveNeeded(true);
-        emit statusMessageRequested(tr("Manual extension applied; saving the tifxyz segment."),kStatusMedium);
+        emit statusMessageRequested(tr("Manual edits applied; saving the tifxyz segment."),kStatusMedium);
     } else {
         // Clear queued vertex edits before refreshing. Otherwise refresh would
         // replay their padded grid indices onto the restored, smaller chart.
         _editManager->resetPreview();
         segmentation::restoreSurface(*surface,*_pointGrowSnapshot);
         _editManager->refreshFromBaseSurface();
-        emit statusMessageRequested(tr("Manual extension canceled; original surface restored."),kStatusShort);
+        emit statusMessageRequested(tr("Manual edits canceled; original surface restored."),kStatusShort);
     }
     _pointGrowTool.clear();
     _pointGrowSnapshot.reset();

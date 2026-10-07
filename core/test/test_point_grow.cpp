@@ -52,7 +52,7 @@ TEST_CASE("continued growth expands padding and undo restores every original poi
     REQUIRE(tool.changedVertices().empty()); originalUnchanged(tool,p);
 }
 
-TEST_CASE("holes are filled locally and original vertices reject accidental edits") {
+TEST_CASE("holes are filled locally and distant clicks leave the surface unchanged") {
     auto p=plane();
     for(int r=4;r<=7;++r) for(int c=4;c<=7;++c) p(r,c)={-1,-1,-1};
     p(1,1)={-1,-1,-1};
@@ -61,10 +61,50 @@ TEST_CASE("holes are filled locally and original vertices reject accidental edit
     originalUnchanged(tool,p);
     REQUIRE(tool.points()(1+tool.offset().y,1+tool.offset().x)[0]==-1);
     const auto before=tool.points().clone();
-    REQUIRE_FALSE(tool.addPoint(p(9,9),2,status));
+    REQUIRE_MESSAGE(tool.addPoint(p(9,9),2,status),status);
     REQUIRE(cv::norm(before,tool.points(),cv::NORM_INF)==0);
     REQUIRE_FALSE(tool.addPoint({9000,9000,9000},2,status));
     REQUIRE(cv::norm(before,tool.points(),cv::NORM_INF)==0);
+}
+
+TEST_CASE("clicks on imported geometry correct only a connected local neighbourhood") {
+    for(int axis=0;axis<3;++axis) {
+        auto p=plane(axis);
+        p(6,6)={-1,-1,-1};
+        PointGrowTool tool; REQUIRE(tool.begin(p)); std::string status;
+        const cv::Point center(5,5), offset=tool.offset();
+        cv::Vec3f delta(0,0,0); delta[axis==0?2:axis==1?1:0]=4;
+        const auto target=p(center)+delta;
+        REQUIRE_MESSAGE(tool.addPoint(target,2,status),status);
+        REQUIRE(tool.points()(center+offset)==target);
+        REQUIRE(tool.anchors().back()==target);
+        REQUIRE(tool.changedVertices().size()>1);
+        for(int r=0;r<p.rows;++r) for(int c=0;c<p.cols;++c) {
+            if(cv::norm(cv::Point(c,r)-center)>=3 || p(r,c)[0]<0)
+                REQUIRE(tool.points()(r+offset.y,c+offset.x)==p(r,c));
+        }
+        // A nearby second click must retain the first explicit constraint.
+        const auto afterFirst=tool.points().clone();
+        const cv::Point second(6,5);
+        const auto secondTarget=tool.points()(second+offset)+delta;
+        REQUIRE_MESSAGE(tool.addPoint(secondTarget,2,status),status);
+        REQUIRE(tool.points()(center+offset)==target);
+        REQUIRE(tool.points()(second+offset)==secondTarget);
+        REQUIRE(tool.undo()); REQUIRE(cv::norm(tool.points(),afterFirst,cv::NORM_INF)==0);
+        REQUIRE(tool.undo()); REQUIRE(tool.changedVertices().empty()); originalUnchanged(tool,p);
+    }
+}
+
+TEST_CASE("an outward click within half a grid step adjusts the edge instead of rejecting it") {
+    auto p=plane(); PointGrowTool tool; REQUIRE(tool.begin(p)); std::string status;
+    const cv::Vec3f edgeTarget(1224,1100,1002);
+    REQUIRE_MESSAGE(tool.addPoint(edgeTarget,2,status),status);
+    REQUIRE(tool.points()(cv::Point(11,5)+tool.offset())==edgeTarget);
+    // The next outward click still grows a strip and preserves the correction.
+    REQUIRE_MESSAGE(tool.addPoint({1280,1100,1002},2,status),status);
+    REQUIRE(tool.points()(cv::Point(11,5)+tool.offset())==edgeTarget);
+    REQUIRE(tool.anchors().back()==cv::Vec3f(1280,1100,1002));
+    REQUIRE(tool.undo()); REQUIRE(tool.undo()); originalUnchanged(tool,p);
 }
 
 TEST_CASE("clicked points remain exact while adding and repositioning new points") {
