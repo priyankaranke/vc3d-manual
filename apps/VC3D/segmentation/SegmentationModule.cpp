@@ -1144,6 +1144,7 @@ void SegmentationModule::undoApprovalStroke()
 
 void SegmentationModule::applyEdits()
 {
+    if (_viewOnly) return;
     if (!_editManager || !_editManager->hasSession()) {
         return;
     }
@@ -1181,6 +1182,7 @@ void SegmentationModule::applyEdits()
 
 void SegmentationModule::resetEdits()
 {
+    if (_viewOnly) return;
     if (!_editManager || !_editManager->hasSession()) {
         return;
     }
@@ -1337,7 +1339,7 @@ void SegmentationModule::refreshOverlay()
         state.correctionDragCurrent = _correctionDrag.currentWorld;
     }
 
-    if (!hasSession) {
+    if (!hasSession || _viewOnly) {
         _overlay->applyState(state);
         return;
     }
@@ -2113,8 +2115,48 @@ bool SegmentationModule::applyManualAddTracerPreview(QuadSurface* surface)
     return true;
 }
 
+void SegmentationModule::setViewOnly(bool enabled)
+{
+    if (_viewOnly == enabled) return;
+    // Keep the live chart and its undo history when locking navigation.
+    // Finish a held brush stroke before preventing further input.
+    if (enabled) {
+        if (_pushPullTool) _pushPullTool->stopAll(false);
+        cancelDrag();
+        cancelCorrectionDrag();
+        _hover.clear();
+    }
+    _viewOnly = enabled;
+    if (!enabled) ensureDirectCTEditing();
+    refreshOverlay();
+    emit viewOnlyChanged(enabled);
+    emit statusMessageRequested(enabled
+        ? tr("View only: segment editing is paused.")
+        : tr("Click CT or use A/D to edit. Changes save automatically; Cmd/Ctrl+Z undoes."), kStatusShort);
+}
+
+bool SegmentationModule::ensureDirectCTEditing()
+{
+    if (_viewOnly || _growthInProgress || !_widget || !_editManager || !_state ||
+        !_widget->manualAddConfig().directCT ||
+        !std::dynamic_pointer_cast<QuadSurface>(_state->surface("segmentation"))) return false;
+    return beginManualAdd();
+}
+
+void SegmentationModule::toggleManualAdd()
+{
+    if (_widget && _widget->manualAddConfig().directCT) {
+        setViewOnly(!_viewOnly);
+    } else if (_manualAddMode) {
+        finishManualAdd(true);
+    } else {
+        beginManualAdd();
+    }
+}
+
 bool SegmentationModule::beginManualAdd()
 {
+    if (_viewOnly) return false;
     if (_manualAddMode) {
         return true;
     }
@@ -2133,7 +2175,8 @@ bool SegmentationModule::beginManualAdd()
         emit statusMessageRequested(tr("Apply or cancel pending edits before Manual Add."), kStatusMedium);
         return false;
     }
-    if (_autosaveState.saveInProgress() || _autosaveState.pending()) {
+    if (!_widget->manualAddConfig().directCT &&
+        (_autosaveState.saveInProgress() || _autosaveState.pending())) {
         emit statusMessageRequested(tr("Wait for the current save before Manual Add."), kStatusMedium);
         return false;
     }
@@ -2158,14 +2201,11 @@ bool SegmentationModule::beginManualAdd()
         return false;
     }
     if (_widget->manualAddConfig().directCT) {
-        _directCTWorkflow = true;
         _pointGrowSnapshot = segmentation::snapshotSurface(*_editManager->baseSurface());
         _pointGrowPublishedOffset = {};
         if (!_pointGrowTool.begin(_editManager->previewPoints())) return false;
         _editManager->setAllowNewVertexEdits(true);
         useFalloff(FalloffTool::PushPull);
-    } else {
-        _directCTWorkflow = false;
     }
     _manualAddMode = true;
     emit manualAddModeChanged(true);
@@ -2173,7 +2213,7 @@ bool SegmentationModule::beginManualAdd()
     _widget->setManualAddActive(true);
     refreshOverlay();
     emit statusMessageRequested(_pointGrowTool.active()
-        ? tr("Edits save automatically. Click CT or use A/D; Q/E changes radius. Cmd/Ctrl+Z undoes; Esc finishes editing.")
+        ? tr("Click CT or use A/D to edit. Changes save automatically. Cmd/Ctrl+Z undoes; View only pauses editing.")
         : tr("Shift+E applies Manual Add; Escape cancels."), kStatusShort);
     return true;
 }
@@ -2278,6 +2318,7 @@ void SegmentationModule::resetManualAddState(bool restorePreview)
 
 bool SegmentationModule::recomputeManualAdd(bool refit)
 {
+    if (_viewOnly) return false;
     if (_pointGrowTool.active()) return publishPointGrowPreview();
     if (!_manualAddMode || !_manualAddTool || !_editManager) {
         return false;
@@ -2338,6 +2379,7 @@ bool SegmentationModule::recomputeManualAdd(bool refit)
 
 bool SegmentationModule::clearManualAddPending()
 {
+    if (_viewOnly) return false;
     if (_pointGrowTool.active()) {
         if (_pushPullTool) _pushPullTool->stopAll(false);
         while (_pointGrowTool.undo()) {}
@@ -2364,6 +2406,7 @@ bool SegmentationModule::clearManualAddPending()
 
 bool SegmentationModule::undoManualAddPlaneConstraint()
 {
+    if (_viewOnly) return false;
     if (_pointGrowTool.active()) {
         if (_pushPullTool) _pushPullTool->stopAll(false);
         if (_pointGrowTool.undo()) {
@@ -2371,6 +2414,7 @@ bool SegmentationModule::undoManualAddPlaneConstraint()
         } else if (!_undoHistory.empty()) {
             finishPointGrow(true);
             restoreUndoSnapshot();
+            ensureDirectCTEditing();
         }
         return true;
     }
@@ -2900,6 +2944,7 @@ void SegmentationModule::updateHover(VolumeViewerBase* viewer,
 
 bool SegmentationModule::startPushPull(int direction, std::optional<bool> alphaOverride)
 {
+    if (_viewOnly) return false;
     return _pushPullTool ? _pushPullTool->start(direction, alphaOverride) : false;
 }
 

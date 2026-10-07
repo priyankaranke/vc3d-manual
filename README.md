@@ -37,7 +37,7 @@ offsets −1, 0, +1, +2 and contrast 0–200. The interactive preview rejects ce
 touching invalid XYZ instead of blending the invalid sentinel into unrelated CT.
 CT cross sections remain single slices so clicks have an exact depth.
 
-- **Add points / Shift+E:** start editing in any CT pane. Click beyond an edge
+- Editing is enabled when a segment opens. Click beyond an edge in any CT pane
   or in a hole to extend the sheet; click on existing geometry to correct it
   locally. Each click immediately updates the surface geometry and preview.
   Every completed click saves automatically in the background.
@@ -46,8 +46,9 @@ CT cross sections remain single slices so clicks have an exact depth.
   also exposes radius, Gaussian falloff, and step size. Each held stroke is one
   undo operation and saves automatically when released.
 - **Ctrl/Cmd+Z:** undo the last click or stroke and automatically save the restored
-  geometry. **Done editing / Shift+E** or **Escape:** leave editing mode, retaining
-  edits and individual Undo history. Closing the app waits for the final save.
+  geometry. **View only / Shift+E:** pause CT clicks and A/D without losing edits
+  or Undo history. **Escape:** stop a held stroke; editing remains available.
+  Closing the app waits for the final save.
 - **R** while hovering: center linked CT slices at that location. **Right-drag:**
   pan. **Wheel:** zoom. **Shift+wheel:** move through CT slices.
 - The Manual Add panel exposes edit width; legacy hole-fill controls remain

@@ -65,6 +65,15 @@ bool SegmentationModule::handleKeyPress(QKeyEvent* event)
         return false;
     }
 
+    if (event->key() == vc3d::keybinds::keypress::ManualAddToggle.key &&
+        event->modifiers() == vc3d::keybinds::keypress::ManualAddToggle.modifiers &&
+        !event->isAutoRepeat()) {
+        toggleManualAdd();
+        event->accept();
+        return true;
+    }
+    if (_viewOnly) return false;
+
     const Qt::KeyboardModifiers keyPressMods = event->modifiers() & ~Qt::KeypadModifier;
     if (event->key() == vc3d::keybinds::keypress::ToggleLastGrowthOverlay.key &&
         keyPressMods == vc3d::keybinds::keypress::ToggleLastGrowthOverlay.modifiers &&
@@ -73,18 +82,6 @@ bool SegmentationModule::handleKeyPress(QKeyEvent* event)
         _correctionDragUsedSinceKeyPress = false;
         if (_editingEnabled && !_growthInProgress && _editManager && _editManager->hasSession()) {
             _correctionDragKeyActive = true;
-        }
-        event->accept();
-        return true;
-    }
-
-    if (event->key() == vc3d::keybinds::keypress::ManualAddToggle.key &&
-        event->modifiers() == vc3d::keybinds::keypress::ManualAddToggle.modifiers &&
-        (!vc3d::keybinds::keypress::ManualAddToggle.requireNoAutoRepeat || !event->isAutoRepeat())) {
-        if (_manualAddMode) {
-            finishManualAdd(true);
-        } else {
-            beginManualAdd();
         }
         event->accept();
         return true;
@@ -137,7 +134,11 @@ bool SegmentationModule::handleKeyPress(QKeyEvent* event)
             return true;
         }
         if (event->key() == vc3d::keybinds::keypress::CancelOperation.key) {
-            finishManualAdd(_pointGrowTool.active());
+            if (_pointGrowTool.active()) {
+                if (_pushPullTool) _pushPullTool->stopAll(false);
+            } else {
+                finishManualAdd(false);
+            }
             event->accept();
             return true;
         }
@@ -265,6 +266,10 @@ bool SegmentationModule::handleKeyPress(QKeyEvent* event)
     const Qt::KeyboardModifiers disallowedMods = pushPullMods &
                                                  ~(Qt::ControlModifier | Qt::KeypadModifier);
     if (pushPullKey && disallowedMods == Qt::NoModifier) {
+        if (_widget && _widget->manualAddConfig().directCT && !ensureDirectCTEditing()) {
+            event->accept();
+            return true;
+        }
         if (!_editingEnabled || !_editManager || !_editManager->hasSession()) {
             emit statusMessageRequested(tr("Enable segmentation editing before using push/pull."), kStatusMedium);
             event->ignore();
@@ -452,15 +457,15 @@ void SegmentationModule::handleMousePress(VolumeViewerBase* viewer,
 {
     const bool isLeftButton = (button == Qt::LeftButton);
     const bool isRightButton = (button == Qt::RightButton);
+    if (_viewOnly) return;
+    if (_widget && _widget->manualAddConfig().directCT && isLeftButton &&
+        (modifiers == Qt::NoModifier || modifiers == Qt::ShiftModifier) &&
+        viewer && dynamic_cast<PlaneSurface*>(viewer->currentSurface()) &&
+        !ensureDirectCTEditing()) return;
 
     if (_manualAddMode && handleManualAddMousePress(viewer, worldPos, button, modifiers, scenePos)) {
         return;
     }
-    // Leaving point mode returns plain clicks to navigation. Keeping the edit
-    // session open preserves whole-edit undo, but must not enable the legacy
-    // click-to-deform tool as an unexpected side effect of Apply or Cancel.
-    if (_directCTWorkflow && _widget && _widget->manualAddConfig().directCT &&
-        isLeftButton && modifiers == Qt::NoModifier) return;
 
     if (_growthInProgress) {
         return;
@@ -618,6 +623,7 @@ void SegmentationModule::handleMouseMove(VolumeViewerBase* viewer,
                                          Qt::KeyboardModifiers modifiers,
                                          const QPointF& scenePos)
 {
+    if (_viewOnly) return;
     if (_pointGrowTool.active() && buttons == Qt::NoButton) {
         recordPointerSample(viewer, worldPos);
         updateHover(viewer, worldPos, scenePos);
@@ -756,6 +762,7 @@ void SegmentationModule::handleMouseRelease(VolumeViewerBase* viewer,
                                             Qt::KeyboardModifiers /*modifiers*/,
                                             const QPointF& scenePos)
 {
+    if (_viewOnly) return;
     if (_manualAddMode) {
         Q_UNUSED(viewer);
         Q_UNUSED(worldPos);

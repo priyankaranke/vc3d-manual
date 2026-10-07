@@ -210,6 +210,7 @@ void SegmentationModule::discardLastUndoSnapshot()
 
 bool SegmentationModule::restoreUndoSnapshot()
 {
+    if (_viewOnly) return false;
     if (_suppressUndoCapture || _growthInProgress) {
         return false;
     }

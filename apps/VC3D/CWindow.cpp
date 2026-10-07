@@ -28,6 +28,7 @@
 #include "viewer_controls/panels/ViewerCompositePanel.hpp"
 #include "viewer_controls/panels/ViewerInkDetectionPanel.hpp"
 #include <QGridLayout>
+#include <QCheckBox>
 #include <QAction>
 #include <QVBoxLayout>
 #include <QCursor>
@@ -7144,15 +7145,6 @@ void CWindow::CreateWidgets(void)
     auto* viewerGrid = new ViewerSplitGrid(ui.tabSegment);
     viewerGrid->setObjectName(QStringLiteral("mainViewerSplitGrid"));
     auto* manualRow = new QHBoxLayout();
-    auto* addPoints = new QPushButton(tr("Add points · Shift+E"), ui.tabSegment);
-    addPoints->setObjectName(QStringLiteral("directPointGrowButton"));
-    addPoints->setCheckable(true);
-    addPoints->setToolTip(tr("Click in XY, XZ or YZ to grow or correct the sheet. Every edit saves automatically. Cmd/Ctrl+Z undoes; Escape finishes editing."));
-    connect(addPoints, &QPushButton::clicked, this, [this,addPoints]() {
-        if (_segmentationModule) _segmentationModule->toggleManualAdd();
-        addPoints->setChecked(_segmentationModule && _segmentationModule->manualAddMode());
-    });
-    manualRow->addWidget(addPoints);
     auto* fourViews = new QPushButton(tr("Four views"),ui.tabSegment);
     connect(fourViews,&QPushButton::clicked,this,[this]() {
         resetSegmentationViews(true);
@@ -7205,7 +7197,16 @@ void CWindow::CreateWidgets(void)
                  &SegmentationModule::setPushPullSigma)->setToolTip(tr("Gaussian sigma in grid steps: controls how gently the brush fades."));
     brushControl(tr("Step"),QStringLiteral("directPushPullStep"),0.05,400,0.05,
                  &SegmentationModule::setPushPullStepMultiplier)->setToolTip(tr("Movement multiplier per A/D step."));
-    auto* help = new QLabel(tr("Autosave · A/D: push/pull · Q/E: radius · R: focus · Cmd/Ctrl+Z: undo · Esc: done"),ui.tabSegment);
+    manualRow->addSpacing(8);
+    auto* viewOnly = new QCheckBox(tr("View only"), ui.tabSegment);
+    viewOnly->setObjectName(QStringLiteral("directViewOnlyToggle"));
+    viewOnly->setToolTip(tr("Pause CT clicks and A/D editing while navigating. Shift+E toggles view only. Your edits and Undo history are retained."));
+    connect(viewOnly, &QCheckBox::toggled, this, [this](bool enabled) {
+        if (_segmentationModule) _segmentationModule->setViewOnly(enabled);
+    });
+    manualRow->addWidget(viewOnly);
+    manualRow->addSpacing(8);
+    auto* help = new QLabel(tr("Autosave · Click CT: add/edit · A/D: push/pull · Q/E: radius · R: focus · Cmd/Ctrl+Z: undo"),ui.tabSegment);
     manualRow->addWidget(help);
     manualRow->addStretch();
     aWidgetLayout->addLayout(manualRow);
@@ -7542,11 +7543,11 @@ void CWindow::CreateWidgets(void)
         _segmentationWidget->isEditingEnabled(),
         this);
 
-    if (auto* addPoints = findChild<QPushButton*>(QStringLiteral("directPointGrowButton"))) {
-        connect(_segmentationModule.get(), &SegmentationModule::manualAddModeChanged,
-                addPoints, [addPoints](bool active) {
-            addPoints->setChecked(active);
-            addPoints->setText(active ? tr("Done editing · Shift+E") : tr("Add points · Shift+E"));
+    if (auto* viewOnly = findChild<QCheckBox*>(QStringLiteral("directViewOnlyToggle"))) {
+        connect(_segmentationModule.get(), &SegmentationModule::viewOnlyChanged,
+                viewOnly, [viewOnly](bool enabled) {
+            const QSignalBlocker block(viewOnly);
+            viewOnly->setChecked(enabled);
         });
     }
     const auto syncBrushControls = [this]() {
@@ -9364,6 +9365,10 @@ void CWindow::onSurfaceActivated(const QString& surfaceId, QuadSurface* surface)
     const std::string previousSurfId = _state->activeSurfaceId();
     const std::string newSurfId = surfaceId.toStdString();
 
+    // Save the old modeless edit session before rebinding the active surface.
+    if (newSurfId != previousSurfId && _segmentationModule && _segmentationModule->editingEnabled())
+        _segmentationModule->setEditingEnabled(false);
+
     // Look up the shared_ptr by display ID. Multi-folder entries are keyed only
     // in CState, while current-folder entries are still owned by VolumePkg.
     if (_state && !newSurfId.empty()) {
@@ -9484,6 +9489,7 @@ void CWindow::onSurfaceActivated(const QString& surfaceId, QuadSurface* surface)
         _surfaceAffineTransforms->refresh();
     }
 
+    if (_segmentationModule) _segmentationModule->ensureDirectCTEditing();
     maybeAttachBenchRecorder();
 }
 
@@ -9518,6 +9524,9 @@ void CWindow::onSurfaceActivatedPreserveEditing(const QString& surfaceId, QuadSu
 {
     const std::string previousSurfId = _state->activeSurfaceId();
     const std::string newSurfId = surfaceId.toStdString();
+
+    if (newSurfId != previousSurfId && _segmentationModule && _segmentationModule->hasActiveSession())
+        _segmentationModule->endEditingSession();
 
     if (_state && !newSurfId.empty()) {
         auto stateSurface = std::dynamic_pointer_cast<QuadSurface>(_state->surface(newSurfId));
@@ -9614,6 +9623,7 @@ void CWindow::onSurfaceActivatedPreserveEditing(const QString& surfaceId, QuadSu
     if (_surfaceAffineTransforms) {
         _surfaceAffineTransforms->refresh();
     }
+    if (_segmentationModule) _segmentationModule->ensureDirectCTEditing();
 }
 
 void CWindow::onSurfaceWillBeDeleted(std::string name, std::shared_ptr<Surface> surf)
