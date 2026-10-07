@@ -1211,7 +1211,7 @@ const std::array<const char*, 4> kDefaultMainViewerSurfaces{
 const std::array<bool, 4> kDefaultMainViewerHidden{
     false,
     false,
-    true,
+    false,
     false,
 };
 
@@ -7152,6 +7152,48 @@ void CWindow::CreateWidgets(void)
 
     auto* viewerGrid = new ViewerSplitGrid(ui.tabSegment);
     viewerGrid->setObjectName(QStringLiteral("mainViewerSplitGrid"));
+    auto* manualRow = new QHBoxLayout();
+    auto* addPoints = new QPushButton(tr("Add points · Shift+E"), ui.tabSegment);
+    addPoints->setObjectName(QStringLiteral("directPointGrowButton"));
+    addPoints->setCheckable(true);
+    addPoints->setToolTip(tr("Click a sheet in XY, XZ or YZ to extend the active surface. Escape cancels."));
+    connect(addPoints, &QPushButton::clicked, this, [this,addPoints]() {
+        if (_segmentationModule) _segmentationModule->toggleManualAdd();
+        addPoints->setChecked(_segmentationModule && _segmentationModule->manualAddMode());
+    });
+    manualRow->addWidget(addPoints);
+    auto* fourViews = new QPushButton(tr("Four views"),ui.tabSegment);
+    connect(fourViews,&QPushButton::clicked,this,[this]() {
+        resetSegmentationViews(true);
+        ui.chkAxisAlignedSlices->setChecked(true);
+        if (_axisAlignedSliceController) {
+            _axisAlignedSliceController->resetAll();
+            _axisAlignedSliceController->applyOrientation();
+        }
+        recenterViewersOnCurrentFocus();
+    });
+    manualRow->addWidget(fourViews);
+    auto* focusPatch = new QPushButton(tr("Focus patch"),ui.tabSegment);
+    connect(focusPatch,&QPushButton::clicked,this,[this]() {
+        if (!_viewerManager || !_state || !_state->surfaceRaw("segmentation")) return;
+        ui.chkAxisAlignedSlices->setChecked(true);
+        if (_axisAlignedSliceController) {
+            _axisAlignedSliceController->resetAll();
+            _axisAlignedSliceController->applyOrientation();
+        }
+        _viewerManager->forEachBaseViewer([](VolumeViewerBase* viewer) {
+            if (viewer && !isAnnotationViewer(viewer)) {
+                viewer->fitSurfaceInView();
+                if (viewer->surfName()=="segmentation") viewer->resetViewForCurrentContent();
+            }
+        });
+        if (const auto* focus = _state->poi("focus")) recenterPlaneViewersOn(focus->p);
+    });
+    manualRow->addWidget(focusPatch);
+    auto* help = new QLabel(tr("Click CT: add   ·   R: center slices   ·   Ctrl/Cmd+Z: undo   ·   Esc: cancel"),ui.tabSegment);
+    manualRow->addWidget(help);
+    manualRow->addStretch();
+    aWidgetLayout->addLayout(manualRow);
     aWidgetLayout->addWidget(viewerGrid, 1);
 
     {
@@ -7484,6 +7526,14 @@ void CWindow::CreateWidgets(void)
         _state->pointCollection(),
         _segmentationWidget->isEditingEnabled(),
         this);
+
+    if (auto* addPoints = findChild<QPushButton*>(QStringLiteral("directPointGrowButton"))) {
+        connect(_segmentationModule.get(), &SegmentationModule::manualAddModeChanged,
+                addPoints, [addPoints](bool active) {
+            addPoints->setChecked(active);
+            addPoints->setText(active ? tr("Apply points · Shift+E") : tr("Add points · Shift+E"));
+        });
+    }
 
     if (_segmentationModule && _planeSlicingOverlay) {
         QPointer<PlaneSlicingOverlayController> overlayPtr(_planeSlicingOverlay.get());

@@ -536,7 +536,7 @@ void SegmentationModule::bindWidgetSignals()
     connect(_widget, &SegmentationWidget::manualAddClearPendingRequested,
             this, &SegmentationModule::clearManualAddPending);
     connect(_widget, &SegmentationWidget::manualAddRecomputeRequested,
-            this, &SegmentationModule::recomputeManualAdd);
+            this, [this]() { recomputeManualAdd(); });
     connect(_widget, &SegmentationWidget::manualAddApplyExitRequested,
             this, [this]() { finishManualAdd(true); });
     connect(_widget, &SegmentationWidget::manualAddCancelRequested,
@@ -1418,7 +1418,31 @@ void SegmentationModule::refreshOverlay()
         state.displayRadiusSteps = _approvalMaskBrushRadius;
     }
 
-    if (_manualAddMode && _manualAddTool) {
+    if (_manualAddMode && _pointGrowTool.active()) {
+        state.manualAddActive = true;
+        state.manualAddRevision = _pointGrowRevision;
+        state.manualAddTintOpacity = 0.35f;
+        state.manualAddPlaneConstraints = _pointGrowTool.anchors();
+        const auto& preview = _pointGrowTool.points();
+        std::set<std::pair<int,int>> cells;
+        for (const auto& key : _pointGrowTool.changedVertices()) {
+            state.manualAddPreviewVertices.push_back(preview(key.row,key.col));
+            // Paint geometry synchronously, even while CT texture is loading.
+            if (!state.manualAddHoverFillSpans.empty() &&
+                state.manualAddHoverFillSpans.back().row==key.row &&
+                state.manualAddHoverFillSpans.back().colLast+1==key.col)
+                state.manualAddHoverFillSpans.back().colLast=key.col;
+            else
+                state.manualAddHoverFillSpans.push_back({key.row,key.col,key.col});
+            for (int r=key.row-1;r<=key.row;++r) for (int c=key.col-1;c<=key.col;++c)
+                if (r>=0 && c>=0 && r+1<preview.rows && c+1<preview.cols) cells.insert({r,c});
+        }
+        for (const auto& [r,c] : cells) {
+            const std::array<cv::Vec3f,4> quad{preview(r,c),preview(r,c+1),preview(r+1,c+1),preview(r+1,c)};
+            if (std::all_of(quad.begin(),quad.end(),[](const auto& p){return !ManualAddTool::isInvalidPoint(p);}))
+                state.manualAddPreviewQuads.push_back(quad);
+        }
+    } else if (_manualAddMode && _manualAddTool) {
         state.manualAddActive = true;
         state.manualAddTintOpacity = _manualAddTool->config().tintOpacity;
         state.manualAddRevision = _manualAddTool->revision();
@@ -2118,16 +2142,25 @@ bool SegmentationModule::beginManualAdd()
         emit statusMessageRequested(tr("Manual Add could not read the active surface."), kStatusMedium);
         return false;
     }
+    if (_widget->manualAddConfig().directCT) {
+        _directCTWorkflow = true;
+        _pointGrowSnapshot = segmentation::snapshotSurface(*_editManager->baseSurface());
+        if (!_pointGrowTool.begin(_editManager->previewPoints())) return false;
+    } else {
+        _directCTWorkflow = false;
+    }
     _manualAddMode = true;
+    emit manualAddModeChanged(true);
     _manualAddHoverThrottle.invalidate();
     _widget->setManualAddActive(true);
     refreshOverlay();
-    emit statusMessageRequested(tr("Manual Add enabled."), kStatusShort);
+    emit statusMessageRequested(tr("Click the sheet in a CT view to extend it. Shift+E applies; Escape cancels."), kStatusShort);
     return true;
 }
 
 bool SegmentationModule::finishManualAdd(bool apply)
 {
+    if (_pointGrowTool.active()) return finishPointGrow(apply);
     if (!_manualAddMode || !_manualAddTool) {
         return false;
     }
@@ -2169,6 +2202,7 @@ bool SegmentationModule::finishManualAdd(bool apply)
     }
 
     _manualAddMode = false;
+    emit manualAddModeChanged(false);
     _manualAddHoverThrottle.invalidate();
     _manualAddTool->clear();
     if (_widget) {
@@ -2184,6 +2218,11 @@ bool SegmentationModule::finishManualAdd(bool apply)
 
 void SegmentationModule::resetManualAddState(bool restorePreview)
 {
+    if (_pointGrowTool.active()) {
+        // Session switches must never leave unpublished geometry in the base.
+        finishPointGrow(false);
+        return;
+    }
     _pendingManualAddTracerMask.release();
 
     if (_manualAddMode && _manualAddTool && restorePreview && _editManager) {
@@ -2200,6 +2239,7 @@ void SegmentationModule::resetManualAddState(bool restorePreview)
 
     const bool wasManualAddMode = _manualAddMode;
     _manualAddMode = false;
+    emit manualAddModeChanged(false);
     _manualAddHoverThrottle.invalidate();
 
     if (_widget) {
@@ -2217,13 +2257,14 @@ void SegmentationModule::resetManualAddState(bool restorePreview)
     }
 }
 
-bool SegmentationModule::recomputeManualAdd()
+bool SegmentationModule::recomputeManualAdd(bool refit)
 {
+    if (_pointGrowTool.active()) return publishPointGrowPreview();
     if (!_manualAddMode || !_manualAddTool || !_editManager) {
         return false;
     }
     std::string status;
-    if (!_manualAddTool->recompute(&status)) {
+    if (refit && !_manualAddTool->recompute(&status)) {
         emit statusMessageRequested(QString::fromStdString(status), kStatusMedium);
         return false;
     }
@@ -2278,6 +2319,10 @@ bool SegmentationModule::recomputeManualAdd()
 
 bool SegmentationModule::clearManualAddPending()
 {
+    if (_pointGrowTool.active()) {
+        while (_pointGrowTool.undo()) {}
+        return publishPointGrowPreview();
+    }
     if (!_manualAddMode || !_manualAddTool || !_editManager) {
         return false;
     }
@@ -2299,6 +2344,12 @@ bool SegmentationModule::clearManualAddPending()
 
 bool SegmentationModule::undoManualAddPlaneConstraint()
 {
+    if (_pointGrowTool.active()) {
+        if (_pointGrowTool.undo()) publishPointGrowPreview();
+        // Consume Undo even when empty; never undo a saved segment underneath
+        // a live manual-add transaction.
+        return true;
+    }
     if (!_manualAddMode || !_manualAddTool || !_editManager) {
         return false;
     }
@@ -2335,6 +2386,24 @@ bool SegmentationModule::handleManualAddMousePress(VolumeViewerBase* viewer,
     if (!_manualAddMode || !_manualAddTool || !viewer) {
         return false;
     }
+    if (_pointGrowTool.active()) {
+        if (button == Qt::LeftButton &&
+            (modifiers == Qt::NoModifier || modifiers == Qt::ShiftModifier) &&
+            dynamic_cast<PlaneSurface*>(viewer->currentSurface())) {
+            if (viewer->isPlaneCompositeEnabled()) {
+                emit statusMessageRequested(tr("Turn off CT compositing to pick an exact slice position."),kStatusMedium);
+                return true;
+            }
+            std::string status;
+            if (_pointGrowTool.addPoint(worldPos, _widget->manualAddConfig().stripWidth, status) &&
+                !publishPointGrowPreview()) {
+                _pointGrowTool.undo();
+                return true;
+            }
+            emit statusMessageRequested(QString::fromStdString(status), kStatusMedium);
+        }
+        return true;
+    }
     if (viewer->surfName() == "segmentation" && button == Qt::LeftButton && modifiers == Qt::NoModifier) {
         const auto grid = segmentationSceneToGrid(viewer,
                                                   scenePos,
@@ -2350,7 +2419,8 @@ bool SegmentationModule::handleManualAddMousePress(VolumeViewerBase* viewer,
             emit statusMessageRequested(QString::fromStdString(status), kStatusMedium);
             return true;
         }
-        return recomputeManualAdd();
+        recomputeManualAdd(false);
+        return true;
     }
 
     auto* planeSurf = dynamic_cast<PlaneSurface*>(viewer->currentSurface());
@@ -2360,7 +2430,8 @@ bool SegmentationModule::handleManualAddMousePress(VolumeViewerBase* viewer,
             std::string status;
             _manualAddTool->removePlaneConstraintNear(worldPos, _manualAddTool->config().planeConstraintRadius, &status);
             emit statusMessageRequested(QString::fromStdString(status), kStatusShort);
-            return recomputeManualAdd();
+            recomputeManualAdd(false);
+        return true;
         }
 
         const auto& preview = _manualAddTool->previewPoints();
@@ -2387,7 +2458,8 @@ bool SegmentationModule::handleManualAddMousePress(VolumeViewerBase* viewer,
             emit statusMessageRequested(QString::fromStdString(status), kStatusMedium);
             return true;
         }
-        return recomputeManualAdd();
+        recomputeManualAdd(false);
+        return true;
     }
     Q_UNUSED(scenePos);
     return true;
@@ -2400,6 +2472,7 @@ bool SegmentationModule::handleManualAddMouseMove(VolumeViewerBase* viewer,
     if (!_manualAddMode || !_manualAddTool || !viewer || buttons != Qt::NoButton) {
         return false;
     }
+    if (_pointGrowTool.active()) return true;
     if (viewer->surfName() != "segmentation") {
         return true;
     }

@@ -65,6 +65,13 @@ endfunction()
 
 vc_add_test(NAME test_smoke LIBS doctest::doctest)
 
+vc_add_test(NAME test_point_grow
+    SOURCES test_point_grow.cpp
+            ${PROJECT_SOURCE_DIR}/apps/VC3D/segmentation/tools/PointGrowTool.cpp
+            ${PROJECT_SOURCE_DIR}/apps/VC3D/segmentation/tools/ThinPlateSpline3d.cpp
+    LIBS doctest::doctest Qt6::Core vc_core
+    INCLUDES ${PROJECT_SOURCE_DIR}/apps/VC3D)
+
 vc_add_test(NAME test_appendmask_render)
 
 vc_add_test(NAME test_chunked_plane_sampler_fallback)

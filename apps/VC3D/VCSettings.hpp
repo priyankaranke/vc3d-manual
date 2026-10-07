@@ -63,6 +63,11 @@ inline QString remoteCachePath(const QString& suggestion = {})
 
 inline QString settingsFilePath()
 {
+    const QString overridePath = qEnvironmentVariable("VC3D_SETTINGS_FILE");
+    if (!overridePath.isEmpty()) {
+        QDir().mkpath(QFileInfo(overridePath).absolutePath());
+        return overridePath;
+    }
     // Settings must stay in the user's home — /ephemeral is lost on stop.
     const QString configDir = QDir::homePath() + "/.VC3D";
     QDir dir;

@@ -452,6 +452,11 @@ void SegmentationModule::handleMousePress(VolumeViewerBase* viewer,
     if (_manualAddMode && handleManualAddMousePress(viewer, worldPos, button, modifiers, scenePos)) {
         return;
     }
+    // Leaving point mode returns plain clicks to navigation. Keeping the edit
+    // session open preserves whole-edit undo, but must not enable the legacy
+    // click-to-deform tool as an unexpected side effect of Apply or Cancel.
+    if (_directCTWorkflow && _widget && _widget->manualAddConfig().directCT &&
+        isLeftButton && modifiers == Qt::NoModifier) return;
 
     if (_growthInProgress) {
         return;

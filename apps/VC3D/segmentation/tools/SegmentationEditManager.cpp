@@ -275,6 +275,9 @@ bool SegmentationEditManager::setPreviewPointsOnly(const cv::Mat_<cv::Vec3f>& po
     }
 
     points.copyTo(*preview);
+    // Removed/undone additions must invalidate their old index entries too.
+    for (const auto& entry : _editedVertices)
+        queueEditSurfacePatchIndexVertex(entry.first.row, entry.first.col);
     _editedVertices.clear();
     _recentTouched.clear();
     _recentTouched.reserve(editedVertices.size());
@@ -341,7 +344,8 @@ bool SegmentationEditManager::setResizedPreviewPoints(const cv::Mat_<cv::Vec3f>&
         return false;
     }
 
-    _preResizeOriginalPoints = std::make_unique<cv::Mat_<cv::Vec3f>>(preview->clone());
+    if (!_preResizeOriginalPoints)
+        _preResizeOriginalPoints = std::make_unique<cv::Mat_<cv::Vec3f>>(preview->clone());
     points.copyTo(*preview);
     _originalPoints = std::make_unique<cv::Mat_<cv::Vec3f>>(originalPoints.clone());
     _editedVertices.clear();
@@ -376,6 +380,7 @@ bool SegmentationEditManager::setResizedPreviewPoints(const cv::Mat_<cv::Vec3f>&
     if (_baseSurface) {
         _baseSurface->invalidateCache();
     }
+    rebuildEditSurfacePatchIndex();
     _hasPendingEdits = markAsPendingEdit && !_editedVertices.empty();
     if (_pendingGrowthMarking && !_editedVertices.empty()) {
         _pendingGrowthMarking = false;

@@ -91,9 +91,17 @@ bool ThinPlateSpline3d::fit(const std::vector<Sample>& samples, double regulariz
         rhsZ(r, 0) = samples[r].value[2];
     }
 
-    return cv::solve(lhs, rhsX, _coeffX, cv::DECOMP_SVD) &&
-           cv::solve(lhs, rhsY, _coeffY, cv::DECOMP_SVD) &&
-           cv::solve(lhs, rhsZ, _coeffZ, cv::DECOMP_SVD);
+    cv::Mat rhs, coeff;
+    cv::hconcat(std::vector<cv::Mat>{rhsX,rhsY,rhsZ},rhs);
+    // Factor once for all XYZ channels. The normalized TPS system is square;
+    // pivoted LU handles the ordinary case, SVD remains the singular fallback.
+    if (!cv::solve(lhs,rhs,coeff,cv::DECOMP_LU) &&
+        !cv::solve(lhs,rhs,coeff,cv::DECOMP_SVD)) return false;
+    if (!cv::checkRange(coeff)) return false;
+    _coeffX=coeff.col(0).clone();
+    _coeffY=coeff.col(1).clone();
+    _coeffZ=coeff.col(2).clone();
+    return true;
 }
 
 std::optional<cv::Vec3f> ThinPlateSpline3d::evaluate(const cv::Point2d& grid) const

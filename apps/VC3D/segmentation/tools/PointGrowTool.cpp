@@ -1,0 +1,211 @@
+#include "PointGrowTool.hpp"
+#include "ThinPlateSpline3d.hpp"
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <map>
+#include <functional>
+
+namespace {
+bool valid(const cv::Vec3f& p) {
+    return p[0] >= 0 && p[1] >= 0 && p[2] >= 0 &&
+           std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2]);
+}
+bool inside(const cv::Mat& m, cv::Point p) {
+    return p.x >= 0 && p.y >= 0 && p.x < m.cols && p.y < m.rows;
+}
+double distanceToLine(cv::Point p, cv::Point a, cv::Point b) {
+    const cv::Point2d v = b - a, d = p - a;
+    const double t = v.dot(v) > 0 ? std::clamp(d.dot(v) / v.dot(v), 0.0, 1.0) : 0;
+    return cv::norm(d - t * v);
+}
+}
+
+void PointGrowTool::clear() {
+    _points.release(); _original.release(); _anchors.clear(); _undo.clear(); _offset = {};
+}
+
+bool PointGrowTool::begin(const cv::Mat_<cv::Vec3f>& points) {
+    clear();
+    if (points.empty()) return false;
+    _points = points.clone(); _original = points.clone();
+    pad(16);
+    return true;
+}
+
+void PointGrowTool::pad(int amount) {
+    auto grow = [amount](cv::Mat_<cv::Vec3f>& m) {
+        cv::Mat_<cv::Vec3f> next(m.rows + 2 * amount, m.cols + 2 * amount, cv::Vec3f(-1, -1, -1));
+        m.copyTo(next(cv::Rect(amount, amount, m.cols, m.rows)));
+        m = std::move(next);
+    };
+    grow(_points); grow(_original);
+    const cv::Point delta(amount, amount);
+    _offset += delta;
+    for (auto& a : _anchors) a.grid += delta;
+    for (auto& u : _undo) {
+        for (auto& c : u.changes) c.grid += delta;
+        for (auto& a : u.anchors) a.grid += delta;
+    }
+}
+
+bool PointGrowTool::addPoint(const cv::Vec3f& world, int width, std::string& status) {
+    if (!active() || !valid(world)) { status = "Choose a point inside the CT volume."; return false; }
+    std::optional<PointGrowTool> beforePadding;
+    bool committed = false;
+    struct Rollback { std::function<void()> restore; ~Rollback() { restore(); } } rollback{
+        [&]() { if (!committed && beforePadding) *this = std::move(*beforePadding); }
+    };
+    width = std::clamp(width, 1, 6);
+    cv::Point nearest(-1, -1);
+    double best = std::numeric_limits<double>::max();
+    // A compact imported chart is typically thousands of nodes. This scan has
+    // no allocations or surface projections and also works at holes/concavities.
+    for (int r = 0; r < _points.rows; ++r) for (int c = 0; c < _points.cols; ++c) {
+        const auto& p = _points(r, c);
+        if (!valid(p)) continue;
+        const auto d = p - world;
+        const double d2 = d.dot(d);
+        if (d2 < best) { best = d2; nearest = {c, r}; }
+    }
+    if (nearest.x < 0) { status = "Import a surface with existing geometry first."; return false; }
+
+    // Estimate the inherited chart's two tangents using a small local fit.
+    std::vector<cv::Vec3d> rows, values;
+    for (int dr = -2; dr <= 2; ++dr) for (int dc = -2; dc <= 2; ++dc) {
+        cv::Point p = nearest + cv::Point(dc, dr);
+        if (inside(_points, p) && valid(_points(p))) {
+            rows.emplace_back(1, dc, dr);
+            values.emplace_back(_points(p));
+        }
+    }
+    if (rows.size() < 3) { status = "Click near a wider part of the surface edge."; return false; }
+    cv::Mat a(static_cast<int>(rows.size()), 3, CV_64F, rows.data());
+    cv::Mat b(static_cast<int>(values.size()), 3, CV_64F, values.data());
+    cv::Mat coeff;
+    if (!cv::solve(a, b, coeff, cv::DECOMP_SVD)) return false;
+    cv::Vec3d du(coeff.at<double>(1,0), coeff.at<double>(1,1), coeff.at<double>(1,2));
+    cv::Vec3d dv(coeff.at<double>(2,0), coeff.at<double>(2,1), coeff.at<double>(2,2));
+    const double uu = du.dot(du), vv = dv.dot(dv), uv = du.dot(dv), det = uu * vv - uv * uv;
+    if (det < 1e-6 || uu < 0.01 || vv < 0.01) {
+        status = "The edge has no usable surface tangent; choose another nearby point."; return false;
+    }
+    cv::Vec3d d = cv::Vec3d(world) - cv::Vec3d(_points(nearest));
+    double dc = (d.dot(du) * vv - d.dot(dv) * uv) / det;
+    double dr = (d.dot(dv) * uu - d.dot(du) * uv) / det;
+    const double step = std::sqrt(std::min(uu, vv));
+    const cv::Vec3d normal = du.cross(dv) / std::sqrt(det);
+    if (std::hypot(dc, dr) > 12 || cv::norm(d) > 14 * step || std::abs(d.dot(normal)) > 3 * step) {
+        status = "Click closer to the edge (within 12 grid steps), then continue outward."; return false;
+    }
+    cv::Point target = nearest + cv::Point(std::lround(dc), std::lround(dr));
+    if (inside(_original, target) && valid(_original(target))) {
+        status = "Original geometry stays fixed. Click just beyond its edge or into a hole."; return false;
+    }
+    if (target.x < width + 4 || target.y < width + 4 ||
+        target.x >= _points.cols - width - 4 || target.y >= _points.rows - width - 4) {
+        beforePadding = *this;
+        pad(16); nearest += cv::Point(16,16); target += cv::Point(16,16);
+    }
+
+    const cv::Rect region(std::min(nearest.x,target.x)-width, std::min(nearest.y,target.y)-width,
+                         std::abs(nearest.x-target.x)+2*width+1, std::abs(nearest.y-target.y)+2*width+1);
+    std::vector<cv::Point> fill;
+    for (int r = region.y; r < region.br().y; ++r) for (int c = region.x; c < region.br().x; ++c) {
+        cv::Point p(c,r);
+        if (!inside(_points,p) || valid(_original(p))) continue;
+        // New strips attach to the existing grid; a correction only refits a
+        // small neighbourhood of a point added in this session.
+        if (distanceToLine(p,nearest,target) <= width &&
+            (!valid(_points(p)) || cv::norm(p-target) <= width)) fill.push_back(p);
+    }
+    if (fill.empty()) { status = "No new surface cells at this point."; return false; }
+    std::map<std::pair<int,int>, ThinPlateSpline3d::Sample> samples;
+    auto sample = [&](cv::Point p, cv::Vec3f w) {
+        samples[{p.y,p.x}] = {cv::Point2d(p),cv::Vec3d(w)};
+    };
+    // Bound the fit, not the number of original vertices preserved. All original
+    // XYZ values are copied verbatim; interpolation only writes the small strip.
+    std::vector<cv::Point> candidates;
+    for (int r = region.y-3; r < region.br().y+3; ++r) for (int c = region.x-3; c < region.br().x+3; ++c) {
+        cv::Point p(c,r);
+        if (!inside(_points,p) || !valid(_points(p))) continue;
+        if (valid(_original(p)) || cv::norm(p-target) > width) candidates.push_back(p);
+    }
+    if (candidates.size() > 64) {
+        for (size_t i=0; i<64; ++i) { const auto p=candidates[i*candidates.size()/64]; sample(p,_points(p)); }
+    } else for (auto p : candidates) sample(p,_points(p));
+    for (const auto& anchor : _anchors) if (cv::norm(anchor.grid-target) < 18) sample(anchor.grid,anchor.world);
+    sample(target,world);
+    std::vector<ThinPlateSpline3d::Sample> fitSamples;
+    for (const auto& entry : samples) fitSamples.push_back(entry.second);
+    ThinPlateSpline3d tps;
+    if (!tps.fit(fitSamples,0.0)) { status = "Cannot fit this extension; click nearer the existing edge."; return false; }
+
+    std::map<std::pair<int,int>,cv::Vec3f> proposed;
+    for (auto p : fill) {
+        auto value = tps.evaluate(cv::Point2d(p));
+        if (!value || !valid(*value)) { status = "Extension leaves the CT coordinate range."; return false; }
+        proposed[{p.y,p.x}] = *value;
+    }
+    proposed[{target.y,target.x}] = world;
+    for (const auto& anchor : _anchors) {
+        if (anchor.grid != target && proposed.count({anchor.grid.y,anchor.grid.x}))
+            proposed[{anchor.grid.y,anchor.grid.x}] = anchor.world;
+    }
+    auto at = [&](cv::Point p) -> cv::Vec3f {
+        auto it = proposed.find({p.y,p.x});
+        return it != proposed.end() ? it->second : inside(_points,p) ? _points(p) : cv::Vec3f(-1,-1,-1);
+    };
+    // Refuse collapsed/stretched edges and chart folds instead of silently
+    // creating geometry that a downstream unwrap cannot use.
+    for (const auto& [key,value] : proposed) {
+        cv::Point p(key.second,key.first);
+        for (auto delta : {cv::Point(1,0),cv::Point(-1,0),cv::Point(0,1),cv::Point(0,-1)}) {
+            auto q=at(p+delta); if (!valid(q)) continue;
+            const double length=cv::norm(q-value), expected=delta.x ? std::sqrt(uu) : std::sqrt(vv);
+            if (length < 0.15*expected || length > 3*expected) {
+                status = "That point would stretch or collapse the grid. Use a closer point."; return false;
+            }
+        }
+        for (int y=-1;y<=0;++y) for(int x=-1;x<=0;++x) {
+            cv::Point o=p+cv::Point(x,y);
+            auto p0=at(o), p1=at(o+cv::Point(1,0)), p2=at(o+cv::Point(0,1)), p3=at(o+cv::Point(1,1));
+            if (!valid(p0)||!valid(p1)||!valid(p2)||!valid(p3)) continue;
+            if (cv::Vec3d((p1-p0).cross(p2-p0)).dot(normal) <= 0 ||
+                cv::Vec3d((p3-p1).cross(p2-p1)).dot(normal) <= 0) {
+                status = "That extension would fold the surface. Add a closer point along the sheet."; return false;
+            }
+        }
+    }
+    Undo undo; undo.anchors = _anchors;
+    for (const auto& [key,value] : proposed) {
+        cv::Point p(key.second,key.first);
+        undo.changes.push_back({p,_points(p)}); _points(p)=value;
+    }
+    _anchors.erase(std::remove_if(_anchors.begin(),_anchors.end(),[&](const Anchor& a){return a.grid==target;}),_anchors.end());
+    _anchors.push_back({target,world}); _undo.push_back(std::move(undo));
+    committed = true;
+    status = "Point added. Click to continue; Undo removes the last click; Apply saves.";
+    return true;
+}
+
+bool PointGrowTool::undo() {
+    if (_undo.empty()) return false;
+    auto u=std::move(_undo.back()); _undo.pop_back();
+    for (const auto& c:u.changes) _points(c.grid)=c.before;
+    _anchors=std::move(u.anchors); return true;
+}
+
+std::vector<PointGrowTool::GridKey> PointGrowTool::changedVertices() const {
+    std::vector<GridKey> result;
+    for(int r=0;r<_points.rows;++r) for(int c=0;c<_points.cols;++c)
+        if (_points(r,c)!=_original(r,c)) result.push_back({r,c});
+    return result;
+}
+
+std::vector<cv::Vec3f> PointGrowTool::anchors() const {
+    std::vector<cv::Vec3f> result;
+    for(const auto& a:_anchors) result.push_back(a.world);
+    return result;
+}

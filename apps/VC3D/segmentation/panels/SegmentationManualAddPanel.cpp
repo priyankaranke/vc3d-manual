@@ -8,6 +8,7 @@
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QLabel>
 #include <QPushButton>
 #include <QSettings>
 #include <QSignalBlocker>
@@ -26,6 +27,29 @@ SegmentationManualAddPanel::SegmentationManualAddPanel(const QString& settingsGr
 
     auto* group = new QGroupBox(tr("Manual Add"), this);
     auto* layout = new QVBoxLayout(group);
+    auto* help = new QLabel(tr("Shift+E starts or applies. Click the sheet in XY, XZ or YZ to extend it. "
+                              "Ctrl/Cmd+Z undoes a click; Escape cancels. Right-drag pans; Shift+scroll slices; scroll zooms. "
+                              "Hover and press R to center all CT slices at that point."), group);
+    help->setWordWrap(true);
+    layout->addWidget(help);
+    _directCT = new QCheckBox(tr("Grow directly from CT clicks"), group);
+    _directCT->setChecked(true);
+    layout->addWidget(_directCT);
+    _stripWidth = new QSpinBox(group);
+    _stripWidth->setRange(1, 6);
+    _stripWidth->setValue(2);
+    _stripWidth->setSuffix(tr(" grid steps"));
+    auto* simpleForm = new QFormLayout();
+    simpleForm->addRow(tr("Extension half-width"), _stripWidth);
+    layout->addLayout(simpleForm);
+    auto* advancedToggle = new QPushButton(tr("Advanced hole-fill settings"), group);
+    advancedToggle->setCheckable(true);
+    layout->addWidget(advancedToggle);
+    auto* advanced = new QWidget(group);
+    auto* advancedLayout = new QVBoxLayout(advanced);
+    advancedLayout->setContentsMargins(0,0,0,0);
+    advanced->hide();
+    connect(advancedToggle, &QPushButton::toggled, advanced, &QWidget::setVisible);
     auto* form = new QFormLayout();
 
     _spinMaxPreviewSpan = new QSpinBox(group);
@@ -86,15 +110,16 @@ SegmentationManualAddPanel::SegmentationManualAddPanel(const QString& settingsGr
     _comboInterpolationMode->addItem(tr("Tracer inside fill"), static_cast<int>(ManualAddTool::InterpolationMode::TracerRestrictedToFill));
     form->addRow(tr("Fill method"), _comboInterpolationMode);
 
-    layout->addLayout(form);
+    advancedLayout->addLayout(form);
 
     _chkIncludeTouchedValidBorder = new QCheckBox(tr("Include touched valid border in fit"), group);
     _chkIncludeTouchedValidBorder->setChecked(true);
-    layout->addWidget(_chkIncludeTouchedValidBorder);
+    advancedLayout->addWidget(_chkIncludeTouchedValidBorder);
 
     _chkAllowBoundarySmoothing = new QCheckBox(tr("Allow boundary smoothing"), group);
     _chkAllowBoundarySmoothing->setChecked(false);
-    layout->addWidget(_chkAllowBoundarySmoothing);
+    advancedLayout->addWidget(_chkAllowBoundarySmoothing);
+    layout->addWidget(advanced);
 
     auto* buttons = new QHBoxLayout();
     _btnClearPending = new QPushButton(tr("Clear Pending"), group);
@@ -114,6 +139,8 @@ SegmentationManualAddPanel::SegmentationManualAddPanel(const QString& settingsGr
         persistFromUi();
         emit configChanged();
     };
+    connect(_directCT, &QCheckBox::toggled, this, persist);
+    connect(_stripWidth, QOverload<int>::of(&QSpinBox::valueChanged), this, persist);
     for (auto* spin : {_spinMaxPreviewSpan, _spinBoundaryBand, _spinSampleCap, _spinPreviewThrottle, _spinTintOpacity}) {
         connect(spin, QOverload<int>::of(&QSpinBox::valueChanged), this, persist);
     }
@@ -133,6 +160,8 @@ SegmentationManualAddPanel::SegmentationManualAddPanel(const QString& settingsGr
 ManualAddTool::Config SegmentationManualAddPanel::config() const
 {
     ManualAddTool::Config cfg;
+    cfg.directCT = _directCT->isChecked();
+    cfg.stripWidth = _stripWidth->value();
     cfg.maxPreviewSpan = _spinMaxPreviewSpan->value();
     cfg.boundaryBand = _spinBoundaryBand->value();
     cfg.regularization = _spinRegularization->value();
@@ -158,6 +187,8 @@ ManualAddTool::LinePreviewMode SegmentationManualAddPanel::cycleLinePreviewMode(
 void SegmentationManualAddPanel::restoreSettings(QSettings& settings)
 {
     _restoringSettings = true;
+    _directCT->setChecked(settings.value(QStringLiteral("manual_add_direct_ct"), true).toBool());
+    _stripWidth->setValue(settings.value(QStringLiteral("manual_add_strip_width"), 2).toInt());
     auto setSpin = [](auto* spin, auto value) {
         const QSignalBlocker blocker(spin);
         spin->setValue(value);
@@ -198,6 +229,7 @@ void SegmentationManualAddPanel::restoreSettings(QSettings& settings)
 void SegmentationManualAddPanel::syncUiState(bool editingEnabled, bool manualAddActive)
 {
     setEnabled(editingEnabled);
+    _directCT->setEnabled(editingEnabled && !manualAddActive);
     if (_btnRecompute) {
         _btnRecompute->setEnabled(editingEnabled && manualAddActive);
     }
@@ -225,6 +257,8 @@ void SegmentationManualAddPanel::persistFromUi()
     if (_restoringSettings) {
         return;
     }
+    writeSetting(QStringLiteral("manual_add_direct_ct"), _directCT->isChecked());
+    writeSetting(QStringLiteral("manual_add_strip_width"), _stripWidth->value());
     writeSetting(QStringLiteral("manual_add_max_preview_span"), _spinMaxPreviewSpan->value());
     writeSetting(QStringLiteral("manual_add_boundary_band"), _spinBoundaryBand->value());
     writeSetting(QStringLiteral("manual_add_regularization"), _spinRegularization->value());

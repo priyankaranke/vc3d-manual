@@ -1,4 +1,5 @@
 #include "CChunkedVolumeViewer.hpp"
+#include "SurfacePreviewFootprint.hpp"
 
 #include "CState.hpp"
 #include "elements/ViewerStatsBar.hpp"
@@ -1012,6 +1013,20 @@ void CChunkedVolumeViewer::onSurfaceChanged(const std::string& name,
     updateContentBounds();
     const bool isSegmentationQuadSurface =
         _surfName == "segmentation" && dynamic_cast<QuadSurface*>(surf.get());
+    if (!isEditUpdate && isSegmentationQuadSurface && surf->meta.contains("source_case_id")) {
+        // Imported Will atlas surfaces already carry canonical flatboi/UV20
+        // coordinates. Match the atlas's native MAX at offsets -1,0,+1,+2.
+        _compositeSettings.enabled = true;
+        _compositeSettings.layersBehind = 1;
+        _compositeSettings.layersFront = 2;
+        _compositeSettings.reverseDirection = false;
+        _compositeSettings.useVolumeGradients = false;
+        _compositeSettings.params.method = "max";
+        _compositeSettings.params.lightingEnabled = false;
+        _compositeSettings.params.isoCutoff = 0;
+        _windowLow = 0;
+        _windowHigh = 200;
+    }
 
     auto setSegmentationPointerFromFocus = [&]() {
         auto* quad = dynamic_cast<QuadSurface*>(surf.get());
@@ -1554,7 +1569,7 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
                 const auto* nrow = normals.ptr<cv::Vec3f>(y);
                 auto* dstRow = layerCoords.ptr<cv::Vec3f>(y);
                 for (int x = 0; x < coords.cols; ++x) {
-                    if (!std::isfinite(src[x][0]) || src[x][0] == -1.0f)
+                    if (offset == 0 || !std::isfinite(src[x][0]) || src[x][0] == -1.0f)
                         dstRow[x] = src[x];
                     else
                         dstRow[x] = src[x] + nrow[x] * offset;
@@ -1687,6 +1702,8 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
             if (profilePhases) phaseTimer.restart();
             ctx.surf->gen(&coords, needSurfaceNormals ? &normals : nullptr,
                           cv::Size(ctx.fbW, ctx.fbH), {0, 0, 0}, ctx.scale, offset);
+            if (auto* quad = dynamic_cast<QuadSurface*>(ctx.surf.get()))
+                guardSurfacePreviewFootprint(*quad,coords,normals,ctx.scale,offset);
             applyPerPixelNormalOffset(coords, normals, ctx.zOff);
             if (profilePhases) phaseGenMs = phaseTimer.elapsed();
 
@@ -2421,10 +2438,10 @@ void CChunkedVolumeViewer::resetViewForCurrentContent(bool forceRender)
                 points && !points->empty()) {
                 const cv::Vec3f center = quad->center();
                 const cv::Vec2f gridScale = quad->scale();
-                minU = -center[0] * gridScale[0];
-                minV = -center[1] * gridScale[1];
-                maxU = static_cast<float>(points->cols - 1) - center[0] * gridScale[0];
-                maxV = static_cast<float>(points->rows - 1) - center[1] * gridScale[1];
+                minU = -center[0];
+                minV = -center[1];
+                maxU = static_cast<float>(points->cols - 1)/gridScale[0] - center[0];
+                maxV = static_cast<float>(points->rows - 1)/gridScale[1] - center[1];
                 haveBounds = maxU > minU && maxV > minV;
             }
         } catch (const std::exception& e) {
@@ -3493,6 +3510,16 @@ cv::Vec3f CChunkedVolumeViewer::sceneToVolume(const QPointF& scenePoint) const
     if (!surf)
         return {0, 0, 0};
     const cv::Vec2f sp = sceneToSurface(scenePoint);
+    if (auto* quad = dynamic_cast<QuadSurface*>(surf.get())) {
+        const auto& points = *quad->rawPointsPtr();
+        const auto center = quad->center();
+        const auto scale = quad->scale();
+        const int c=int(std::floor((sp[0]+center[0])*scale[0]));
+        const int r=int(std::floor((sp[1]+center[1])*scale[1]));
+        if(c<0 || r<0 || c+1>=points.cols || r+1>=points.rows ||
+           points(r,c)[0]<0 || points(r,c+1)[0]<0 || points(r+1,c)[0]<0 || points(r+1,c+1)[0]<0)
+            return {NAN,NAN,NAN};
+    }
     return surf->coord({0, 0, 0}, {sp[0], sp[1], 0});
 }
 

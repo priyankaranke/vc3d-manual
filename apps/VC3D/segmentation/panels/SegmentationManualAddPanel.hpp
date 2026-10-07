@@ -38,6 +38,8 @@ private:
     bool _restoringSettings{false};
 
     QSpinBox* _spinMaxPreviewSpan{nullptr};
+    QCheckBox* _directCT{nullptr};
+    QSpinBox* _stripWidth{nullptr};
     QSpinBox* _spinBoundaryBand{nullptr};
     QDoubleSpinBox* _spinRegularization{nullptr};
     QSpinBox* _spinSampleCap{nullptr};

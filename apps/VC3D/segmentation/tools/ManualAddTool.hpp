@@ -28,6 +28,8 @@ public:
 
     struct Config
     {
+        bool directCT{true};
+        int stripWidth{2};
         int maxPreviewSpan{256};
         int boundaryBand{2};
         double regularization{1e-4};

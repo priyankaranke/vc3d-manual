@@ -119,6 +119,9 @@ set(srcs
     segmentation/tools/SurfaceMaskBrushTool.hpp
     segmentation/tools/ManualAddTool.cpp
     segmentation/tools/ManualAddTool.hpp
+    segmentation/tools/PointGrowTool.cpp
+    segmentation/tools/PointGrowTool.hpp
+    segmentation/SegmentationModule_PointGrow.cpp
     segmentation/tools/ThinPlateSpline3d.cpp
     segmentation/tools/ThinPlateSpline3d.hpp
     segmentation/tools/SegmentationLineTool.cpp

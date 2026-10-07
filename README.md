@@ -14,6 +14,53 @@ Via Vesuvius Challenge, it has gone through a few forks:
 this repository (developed and maintained by the Vesuvius Challenge team).
 The original Volume Cartographer is a general purpose toolkit for virtual unwrapping, while this version is specialized for the frontier challenges of the Herculaneum papyri.
 
+### Manual CT extension
+
+This branch adds a four-pane workspace: the flattened surface at top left,
+XY at top right, XZ at bottom left, and YZ at bottom right. **Four views**
+restores this layout; **Focus patch** centers the views on the active focus.
+
+Open a native tifxyz segment or import a Will atlas patch into a new project:
+
+```sh
+python scripts/import_will_surface.py \
+  --atlas-url 'http://127.0.0.1:8798/?patch=YOUR_PATCH_ID' \
+  --output /path/to/new-project
+```
+
+The importer needs NumPy and tifffile. Open the resulting `project.volpkg.json`
+in VC3D, then double-click its segment. It copies the atlas's existing normalized,
+flattened XYZ coordinates without resampling and connects to the native remote
+CT Zarr. Existing VC3D chunk caching and progressive resolution remain available.
+Imported surfaces start with the dashboard's four-layer MAX preview at native
+offsets −1, 0, +1, +2 and contrast 0–200. The interactive preview rejects cells
+touching invalid XYZ instead of blending the invalid sentinel into unrelated CT.
+CT cross sections remain single slices so clicks have an exact depth.
+
+- **Add points / Shift+E:** enter direct CT extension; click just beyond the
+  existing edge or inside a hole in any CT pane. Each click immediately updates
+  the surface geometry and preview. **Apply points / Shift+E** saves the edit.
+- **Ctrl/Cmd+Z:** undo the last click. **Escape:** cancel the entire uncommitted
+  extension and restore the original surface and channels.
+- **R** while hovering: center linked CT slices at that location. **Right-drag:**
+  pan. **Wheel:** zoom. **Shift+wheel:** move through CT slices.
+- The Manual Add panel exposes extension width; legacy hole-fill controls remain
+  under **Advanced hole-fill settings**.
+
+The local thin-plate fit writes only new grid points, pins clicked points, and
+preserves original XYZ values and scale exactly. Padding translates ancillary
+channels and correction anchors without image resizing. Overstretched or folded
+extensions are rejected; grow in short steps (at most 12 grid steps per click).
+This does not automatically trace the tissue or alter existing surface vertices.
+Applied edits use VC3D's normal atomic tifxyz saving and whole-edit undo.
+
+The saved segment is native geometry for the Will/VC3D pipeline. New production
+renders still require the established 50-iteration flattening, UV20 normalization,
+physical mapping, and layer order. The interactive preview is not a newly
+certified production render, and there is no global flattening or inference on
+the click path. `VC3D_SETTINGS_FILE` optionally isolates a development build's
+settings from the installed app.
+
 ### Installation Instructions
 Due to a complex set of dependencies, it is *highly* recommended to use the docker image. We host an up-to-date image on the [github container registry](https://github.com/ScrollPrize/villa/pkgs/container/villa%2Fvolume-cartographer) which can be pulled with a simple command :
 

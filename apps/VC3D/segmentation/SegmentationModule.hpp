@@ -27,6 +27,7 @@
 #include "../volume_viewers/VolumeViewerBase.hpp"
 #include "tools/SegmentationEditManager.hpp"
 #include "tools/ManualAddTool.hpp"
+#include "tools/PointGrowTool.hpp"
 #include "growth/SegmentationGrowth.hpp"
 #include "SegmentationPushPullConfig.hpp"
 #include "SegmentationUndoHistory.hpp"
@@ -128,6 +129,7 @@ public:
     void undoApprovalStroke();
 
     void applyEdits();
+    void toggleManualAdd() { if (_manualAddMode) finishManualAdd(true); else beginManualAdd(); }
     void resetEdits();
     void stopTools();
 
@@ -193,6 +195,7 @@ public slots:
     void setSelectedAnnotationCollection(uint64_t collectionId);
 
 signals:
+    void manualAddModeChanged(bool active);
     void editingEnabledChanged(bool enabled);
     void annotateModeChanged(bool enabled);
     void statusMessageRequested(const QString& text, int timeoutMs);
@@ -322,7 +325,9 @@ private:
     bool beginManualAdd();
     bool finishManualAdd(bool apply);
     void resetManualAddState(bool restorePreview);
-    bool recomputeManualAdd();
+    bool recomputeManualAdd(bool refit = true);
+    bool publishPointGrowPreview();
+    bool finishPointGrow(bool apply);
     bool clearManualAddPending();
     bool undoManualAddPlaneConstraint();
     bool handleManualAddMousePress(VolumeViewerBase* viewer,
@@ -446,6 +451,10 @@ private:
     std::unique_ptr<ApprovalMaskBrushTool> _approvalTool;
     std::unique_ptr<SurfaceMaskBrushTool> _surfaceMaskTool;
     std::unique_ptr<ManualAddTool> _manualAddTool;
+    PointGrowTool _pointGrowTool;
+    std::shared_ptr<QuadSurface> _pointGrowSnapshot;
+    uint64_t _pointGrowRevision{0};
+    bool _directCTWorkflow{false};
     bool _manualAddMode{false};
     QElapsedTimer _manualAddHoverThrottle;
     cv::Mat _pendingManualAddTracerMask;

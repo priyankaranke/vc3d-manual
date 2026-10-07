@@ -331,9 +331,15 @@ void CVolumeViewerView::mouseReleaseEvent(QMouseEvent *event)
 
 void CVolumeViewerView::keyPressEvent(QKeyEvent *event)
 {
+    if (_scrollPanDisabled && event->key() == Qt::Key_Escape) {
+        emit sendKeyPress(event->key(), event->modifiers());
+        // Clear a local measurement, then let the window cancel an active
+        // segmentation operation. Swallowing Escape here trapped Manual Add.
+        event->ignore();
+        return;
+    }
     if (_scrollPanDisabled) {
         switch (event->key()) {
-        case Qt::Key_Escape:
         case Qt::Key_Left:
         case Qt::Key_Right:
         case Qt::Key_Up:
