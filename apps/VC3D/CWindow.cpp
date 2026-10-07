@@ -7205,6 +7205,16 @@ void CWindow::CreateWidgets(void)
         if (_segmentationModule) _segmentationModule->setViewOnly(enabled);
     });
     manualRow->addWidget(viewOnly);
+    auto* editShading = new QCheckBox(tr("Edit shading"), ui.tabSegment);
+    editShading->setObjectName(QStringLiteral("directEditShadingToggle"));
+    editShading->setToolTip(tr("Show yellow shading over edited areas. This only changes visibility; editing and Undo stay available."));
+    editShading->setChecked(settings.value(QStringLiteral("segmentation_edit/show_edit_shading"), false).toBool());
+    connect(editShading, &QCheckBox::toggled, this, [this](bool visible) {
+        QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
+        settings.setValue(QStringLiteral("segmentation_edit/show_edit_shading"), visible);
+        if (_segmentationOverlay) _segmentationOverlay->setEditShadingVisible(visible);
+    });
+    manualRow->addWidget(editShading);
     manualRow->addSpacing(8);
     auto* help = new QLabel(tr("Autosave · Click CT: add/edit · A/D: push/pull · Q/E: radius · R: focus · Cmd/Ctrl+Z: undo · Cmd/Ctrl+Shift+Z: redo"),ui.tabSegment);
     manualRow->addWidget(help);
@@ -7530,6 +7540,9 @@ void CWindow::CreateWidgets(void)
     _segmentationOverlay = std::make_unique<SegmentationOverlayController>(_state, this);
     _segmentationOverlay->setEditManager(_segmentationEdit.get());
     _segmentationOverlay->setViewerManager(_viewerManager.get());
+    if (auto* editShading = findChild<QCheckBox*>(QStringLiteral("directEditShadingToggle"))) {
+        _segmentationOverlay->setEditShadingVisible(editShading->isChecked());
+    }
     _surfaceRotationOverlay = std::make_unique<SurfaceRotationOverlayController>(_state, this);
     _surfaceRotationOverlay->setViewerManager(_viewerManager.get());
 

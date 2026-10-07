@@ -120,6 +120,7 @@ public:
     explicit SegmentationOverlayController(CState* state, QObject* parent = nullptr);
 
     void setEditingEnabled(bool enabled);
+    void setEditShadingVisible(bool visible);
     void setEditManager(SegmentationEditManager* manager);
     void setViewerManager(ViewerManager* manager) { _viewerManager = manager; }
     void applyState(const State& state);
@@ -237,6 +238,7 @@ private:
     SegmentationEditManager* _editManager{nullptr};
     ViewerManager* _viewerManager{nullptr};
     bool _editingEnabled{false};
+    bool _editShadingVisible{false};
     std::optional<State> _currentState;
     std::chrono::steady_clock::time_point _lastRefreshTime;
 

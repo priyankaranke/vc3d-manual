@@ -298,6 +298,15 @@ void SegmentationOverlayController::setEditManager(SegmentationEditManager* mana
     _editManager = manager;
 }
 
+void SegmentationOverlayController::setEditShadingVisible(bool visible)
+{
+    if (_editShadingVisible == visible) {
+        return;
+    }
+    _editShadingVisible = visible;
+    refreshAll();
+}
+
 void SegmentationOverlayController::applyState(const State& state)
 {
     State sanitized = state;
@@ -884,7 +893,7 @@ void SegmentationOverlayController::collectPrimitives(VolumeViewerBase* viewer,
             style.z = 110.0;
             builder.addLineStrip(points, false, style);
         };
-        if (flattened) {
+        if (flattened && _editShadingVisible) {
             ViewerOverlayControllerBase::OverlayStyle hoverFillStyle;
             hoverFillStyle.penColor = Qt::transparent;
             hoverFillStyle.brushColor = QColor(255, 220, 0, 55);
