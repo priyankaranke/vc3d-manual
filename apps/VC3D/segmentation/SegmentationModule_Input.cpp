@@ -137,7 +137,7 @@ bool SegmentationModule::handleKeyPress(QKeyEvent* event)
             return true;
         }
         if (event->key() == vc3d::keybinds::keypress::CancelOperation.key) {
-            finishManualAdd(false);
+            finishManualAdd(_pointGrowTool.active());
             event->accept();
             return true;
         }

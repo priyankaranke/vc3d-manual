@@ -22,6 +22,7 @@
 
 #include <QApplication>
 #include <QDebug>
+#include <QEventLoop>
 #include <QCursor>
 #include <QFileDialog>
 #include <QLoggingCategory>
@@ -2159,6 +2160,7 @@ bool SegmentationModule::beginManualAdd()
     if (_widget->manualAddConfig().directCT) {
         _directCTWorkflow = true;
         _pointGrowSnapshot = segmentation::snapshotSurface(*_editManager->baseSurface());
+        _pointGrowPublishedOffset = {};
         if (!_pointGrowTool.begin(_editManager->previewPoints())) return false;
         _editManager->setAllowNewVertexEdits(true);
         useFalloff(FalloffTool::PushPull);
@@ -2170,7 +2172,9 @@ bool SegmentationModule::beginManualAdd()
     _manualAddHoverThrottle.invalidate();
     _widget->setManualAddActive(true);
     refreshOverlay();
-    emit statusMessageRequested(tr("Click CT to grow or touch up. A/D push/pull; Q/E change radius. Shift+E applies; Escape cancels."), kStatusShort);
+    emit statusMessageRequested(_pointGrowTool.active()
+        ? tr("Edits save automatically. Click CT or use A/D; Q/E changes radius. Cmd/Ctrl+Z undoes; Esc finishes editing.")
+        : tr("Shift+E applies Manual Add; Escape cancels."), kStatusShort);
     return true;
 }
 
@@ -2235,8 +2239,7 @@ bool SegmentationModule::finishManualAdd(bool apply)
 void SegmentationModule::resetManualAddState(bool restorePreview)
 {
     if (_pointGrowTool.active()) {
-        // Session switches must never leave unpublished geometry in the base.
-        finishPointGrow(false);
+        finishPointGrow(true);
         return;
     }
     _pendingManualAddTracerMask.release();
@@ -2363,9 +2366,12 @@ bool SegmentationModule::undoManualAddPlaneConstraint()
 {
     if (_pointGrowTool.active()) {
         if (_pushPullTool) _pushPullTool->stopAll(false);
-        if (_pointGrowTool.undo()) publishPointGrowPreview();
-        // Consume Undo even when empty; never undo a saved segment underneath
-        // a live manual-add transaction.
+        if (_pointGrowTool.undo()) {
+            publishPointGrowPreview();
+        } else if (!_undoHistory.empty()) {
+            finishPointGrow(true);
+            restoreUndoSnapshot();
+        }
         return true;
     }
     if (!_manualAddMode || !_manualAddTool || !_editManager) {
@@ -2930,6 +2936,28 @@ void SegmentationModule::markAutosaveNeeded(bool immediate)
     }
 }
 
+bool SegmentationModule::flushAutosave()
+{
+    if (_pointGrowTool.active() && !finishPointGrow(true)) return false;
+    // During editing saves stay asynchronous. Closing/switching waits for the
+    // final queued revision, including an Undo issued during an earlier save.
+    while (_autosaveState.pending() || _autosaveState.saveInProgress()) {
+        if (!_autosaveState.saveInProgress()) {
+            performAutosave();
+            if (!_autosaveState.saveInProgress()) return !_autosaveState.pending();
+        }
+        QEventLoop loop;
+        QTimer poll;
+        connect(&poll, &QTimer::timeout, &loop, [this, &loop]() {
+            if (!_autosaveState.saveInProgress()) loop.quit();
+        });
+        poll.start(20);
+        loop.exec(QEventLoop::ExcludeUserInputEvents);
+        if (_autosaveState.failureNotified()) return false;
+    }
+    return true;
+}
+
 void SegmentationModule::queueAutosaveVertexUpdates(
     const std::vector<SegmentationEditManager::VertexEdit>& edits)
 {
@@ -2992,6 +3020,7 @@ void SegmentationModule::performAutosave()
 
     auto vertexUpdates = std::move(_pendingAutosaveVertexUpdates);
     _pendingAutosaveVertexUpdates.clear();
+    if (_forceFullSurfaceAutosave) vertexUpdates.clear();
 
     auto snapshot = _saveSnapshot;
     const auto savePath = surfacePtr->path;
@@ -3022,6 +3051,7 @@ void SegmentationModule::performAutosave()
     }
 
     const auto autosaveTicket = _autosaveState.startSave();
+    _forceFullSurfaceAutosave = false;
 
     emit statusMessageRequested(tr("Saving..."), kStatusShort);
 
@@ -3099,6 +3129,7 @@ void SegmentationModule::performAutosave()
             _saveSnapshot = savedSnapshot;
             emit statusMessageRequested(tr("Saved"), kStatusShort);
         } else {
+            _forceFullSurfaceAutosave = true;
             qCWarning(lcSegModule) << "Autosave failed:" << failureMessage;
             if (!_autosaveState.failureNotified()) {
                 emit statusMessageRequested(tr("Failed to autosave segmentation: %1")

@@ -40,13 +40,14 @@ CT cross sections remain single slices so clicks have an exact depth.
 - **Add points / Shift+E:** start editing in any CT pane. Click beyond an edge
   or in a hole to extend the sheet; click on existing geometry to correct it
   locally. Each click immediately updates the surface geometry and preview.
-  **Apply points / Shift+E** saves the edit.
+  Every completed click saves automatically in the background.
 - **A/D:** hold to push/pull at the cursor in the flattened or CT views, including
   newly added geometry. **Q/E:** decrease/increase the brush radius. The toolbar
   also exposes radius, Gaussian falloff, and step size. Each held stroke is one
-  undo operation, kept in the same pending edit as point clicks.
-- **Ctrl/Cmd+Z:** undo the last click or stroke. **Escape:** cancel the entire uncommitted
-  extension and restore the original surface and channels.
+  undo operation and saves automatically when released.
+- **Ctrl/Cmd+Z:** undo the last click or stroke and automatically save the restored
+  geometry. **Done editing / Shift+E** or **Escape:** leave editing mode, retaining
+  edits and individual Undo history. Closing the app waits for the final save.
 - **R** while hovering: center linked CT slices at that location. **Right-drag:**
   pan. **Wheel:** zoom. **Shift+wheel:** move through CT slices.
 - The Manual Add panel exposes edit width; legacy hole-fill controls remain
@@ -62,7 +63,8 @@ overstretch or fold the chart are rejected; grow in short steps (at most 12 grid
 steps per click). A/D retains VC3D's native brush behaviour and moves any clicked
 anchors with the edited surface.
 This does not automatically trace the tissue.
-Applied edits use VC3D's normal atomic tifxyz saving and whole-edit undo.
+Edits use VC3D's normal atomic tifxyz saving. Navigation and focus markers use
+the live editing index, including after chart padding and Undo.
 
 The saved segment is native geometry for the Will/VC3D pipeline. New production
 renders still require the established 50-iteration flattening, UV20 normalization,

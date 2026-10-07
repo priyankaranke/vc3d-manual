@@ -506,7 +506,7 @@ bool SegmentationPushPullTool::start(int direction, std::optional<bool> alphaOve
     if (_module._pointGrowTool.active() &&
         _editManager->previewPoints().size() != _module._pointGrowTool.points().size()) {
         // Materialize the padded chart before resolving the brush's grid index.
-        if (!_module.publishPointGrowPreview()) return false;
+        if (!_module.publishPointGrowPreview(false)) return false;
         _module._hover.clear();
     }
 

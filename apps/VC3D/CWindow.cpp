@@ -3,6 +3,7 @@
 #include "RenderBenchRecorder.hpp"
 #include "RenderBenchReplay.hpp"
 #include "StatusDockPanelHost.hpp"
+#include "volume_viewers/SurfaceNavigation.hpp"
 
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/types/VolumePkg.hpp"
@@ -4787,19 +4788,9 @@ void CWindow::recenterSegmentationViewerNear(const cv::Vec3f& position)
         return;
     }
 
-    auto* patchIndex = _viewerManager->surfacePatchIndex();
-    if (!patchIndex || !patchIndex->containsSurface(activeSurface)) {
-        return;
-    }
-
-    SurfacePatchIndex::PointQuery query;
-    query.worldPoint = position;
-    query.tolerance = kMaxDistanceVoxels;
-    query.surfaces.only = activeSurface;
-    auto hit = patchIndex->locate(query);
-    if (hit && hit->distance <= kMaxDistanceVoxels) {
-        const cv::Vec3f loc = activeSurface->loc(hit->ptr);
-        centerViewerOnSurfacePointForNavigation(viewer, {loc[0], loc[1]});
+    auto* patchIndex = _viewerManager->surfacePatchIndexForSurface(activeSurface);
+    if (const auto loc = projectSurfaceForNavigation(*activeSurface, position, kMaxDistanceVoxels, patchIndex)) {
+        centerViewerOnSurfacePointForNavigation(viewer, *loc);
     }
 }
 
@@ -7156,7 +7147,7 @@ void CWindow::CreateWidgets(void)
     auto* addPoints = new QPushButton(tr("Add points · Shift+E"), ui.tabSegment);
     addPoints->setObjectName(QStringLiteral("directPointGrowButton"));
     addPoints->setCheckable(true);
-    addPoints->setToolTip(tr("Click in XY, XZ or YZ: beyond an edge grows the sheet; on existing geometry corrects it locally. Escape cancels."));
+    addPoints->setToolTip(tr("Click in XY, XZ or YZ to grow or correct the sheet. Every edit saves automatically. Cmd/Ctrl+Z undoes; Escape finishes editing."));
     connect(addPoints, &QPushButton::clicked, this, [this,addPoints]() {
         if (_segmentationModule) _segmentationModule->toggleManualAdd();
         addPoints->setChecked(_segmentationModule && _segmentationModule->manualAddMode());
@@ -7214,7 +7205,7 @@ void CWindow::CreateWidgets(void)
                  &SegmentationModule::setPushPullSigma)->setToolTip(tr("Gaussian sigma in grid steps: controls how gently the brush fades."));
     brushControl(tr("Step"),QStringLiteral("directPushPullStep"),0.05,400,0.05,
                  &SegmentationModule::setPushPullStepMultiplier)->setToolTip(tr("Movement multiplier per A/D step."));
-    auto* help = new QLabel(tr("A/D: push/pull · Q/E: radius · R: focus · Cmd/Ctrl+Z: undo · Esc: cancel"),ui.tabSegment);
+    auto* help = new QLabel(tr("Autosave · A/D: push/pull · Q/E: radius · R: focus · Cmd/Ctrl+Z: undo · Esc: done"),ui.tabSegment);
     manualRow->addWidget(help);
     manualRow->addStretch();
     aWidgetLayout->addLayout(manualRow);
@@ -7555,7 +7546,7 @@ void CWindow::CreateWidgets(void)
         connect(_segmentationModule.get(), &SegmentationModule::manualAddModeChanged,
                 addPoints, [addPoints](bool active) {
             addPoints->setChecked(active);
-            addPoints->setText(active ? tr("Apply points · Shift+E") : tr("Add points · Shift+E"));
+            addPoints->setText(active ? tr("Done editing · Shift+E") : tr("Add points · Shift+E"));
         });
     }
     const auto syncBrushControls = [this]() {
@@ -8544,6 +8535,10 @@ void CWindow::saveWindowState()
 
 void CWindow::closeEvent(QCloseEvent* event)
 {
+    if (_segmentationModule && !_segmentationModule->flushAutosave()) {
+        event->ignore();
+        return;
+    }
     // Flush a render-bench recording (if any) before teardown.
     if (_benchRecorder && _benchRecorder->attached()) {
         _benchRecorder->save();

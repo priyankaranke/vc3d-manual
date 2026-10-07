@@ -134,6 +134,7 @@ public:
     float intersectionThickness() const { return _intersectionThickness; }
     void setHighlightedSurfaceIds(const std::vector<std::string>& ids);
     SurfacePatchIndex* surfacePatchIndex();
+    SurfacePatchIndex* surfacePatchIndexForSurface(const SurfacePatchIndex::SurfacePtr& surface);
     SurfacePatchIndex* surfacePatchIndexIfReady();
     SurfacePatchIndex* activeSegmentationEditSurfacePatchIndex() const;
     void refreshSurfacePatchIndex(const SurfacePatchIndex::SurfacePtr& surface);

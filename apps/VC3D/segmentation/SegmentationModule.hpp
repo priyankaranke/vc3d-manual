@@ -132,6 +132,7 @@ public:
     void toggleManualAdd() { if (_manualAddMode) finishManualAdd(true); else beginManualAdd(); }
     void resetEdits();
     void stopTools();
+    bool flushAutosave();
 
     bool beginEditingSession(std::shared_ptr<QuadSurface> surface);
     void endEditingSession();
@@ -327,7 +328,7 @@ private:
     bool finishManualAdd(bool apply);
     void resetManualAddState(bool restorePreview);
     bool recomputeManualAdd(bool refit = true);
-    bool publishPointGrowPreview();
+    bool publishPointGrowPreview(bool autosave = true);
     bool finishPointGrow(bool apply);
     bool clearManualAddPending();
     bool undoManualAddPlaneConstraint();
@@ -454,6 +455,7 @@ private:
     std::unique_ptr<ManualAddTool> _manualAddTool;
     PointGrowTool _pointGrowTool;
     std::shared_ptr<QuadSurface> _pointGrowSnapshot;
+    cv::Point _pointGrowPublishedOffset{0, 0};
     uint64_t _pointGrowRevision{0};
     bool _directCTWorkflow{false};
     bool _manualAddMode{false};

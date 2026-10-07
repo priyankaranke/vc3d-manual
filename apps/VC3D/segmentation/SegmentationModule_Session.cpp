@@ -81,6 +81,7 @@ bool SegmentationModule::beginEditingSession(std::shared_ptr<QuadSurface> surfac
 
 void SegmentationModule::endEditingSession()
 {
+    if (!flushAutosave()) return;
     _forceFullSurfaceAutosave = false;
     _pendingGridOffsetColDelta = 0;
     _pendingGridOffsetRowDelta = 0;
@@ -234,7 +235,8 @@ bool SegmentationModule::restoreUndoSnapshot()
             auto* restoredPoints = restoredSurface->rawPointsPtr();
             if (restoredPoints) {
                 const auto& currentMeta = restoredSurface->meta;
-                if (currentMeta.contains("grid_offset") && currentMeta["grid_offset"].is_array() &&
+                if (restoredPoints->size() != snapshot->rawPointsPtr()->size() &&
+                    currentMeta.contains("grid_offset") && currentMeta["grid_offset"].is_array() &&
                     currentMeta["grid_offset"].size() == 2) {
                     applyCorrectionAnchorOffset(-currentMeta["grid_offset"][0].get_float(),
                                                 -currentMeta["grid_offset"][1].get_float());
@@ -247,6 +249,7 @@ bool SegmentationModule::restoreUndoSnapshot()
                 _pendingAutosaveVertexUpdates.clear();
                 _pendingAutosaveVertexUpdateIndex.clear();
                 _saveSnapshot.reset();
+                _forceFullSurfaceAutosave = true;
                 restoredGrowthTransaction = true;
                 applied = true;
             }
@@ -329,6 +332,7 @@ bool SegmentationModule::restoreUndoSnapshot()
 
             _state->setSurface("segmentation", preview, false, true);
         }
+        if (_viewerManager && restoredSurface) _viewerManager->refreshSurfacePatchIndex(restoredSurface);
 
         if (editingWasEnabled && !_editingEnabled) {
             setEditingEnabled(true);

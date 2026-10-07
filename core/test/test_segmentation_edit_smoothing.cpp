@@ -3,10 +3,63 @@
 #include "segmentation/tools/SegmentationEditManager.hpp"
 #include "ViewerManager.hpp"
 #include "vc/core/util/QuadSurface.hpp"
+#include "volume_viewers/SurfaceNavigation.hpp"
 #include <opencv2/core.hpp>
 
 // These tests exercise editing without a viewer or its background index.
 SurfacePatchIndex* ViewerManager::surfacePatchIndex() { return nullptr; }
+
+TEST_CASE("navigation follows the live chart after padding, edits, apply and restore")
+{
+    cv::Mat_<cv::Vec3f> original(12,12);
+    for (int r=0;r<12;++r) for (int c=0;c<12;++c)
+        original(r,c)={100+20.f*c,100+20.f*r,100};
+    auto surface=std::make_shared<QuadSurface>(original,cv::Vec2f(.05f,.05f));
+    SurfacePatchIndex sharedIndex;
+    sharedIndex.rebuild({surface},0,false);
+    SegmentationEditManager editor;
+    REQUIRE(editor.beginSession(surface));
+    const cv::Vec3f world(165,170,100);
+    REQUIRE(projectSurfaceForNavigation(*surface,world,4,&sharedIndex));
+
+    // A manual session pads the same surface object, leaving the shared index
+    // on its original rows and columns until the session is committed.
+    cv::Mat_<cv::Vec3f> padded(44,44,cv::Vec3f(-1,-1,-1));
+    original.copyTo(padded(cv::Rect(16,16,12,12)));
+    REQUIRE(editor.setResizedPreviewPoints(padded,padded,{},false));
+    // A stale index can miss entirely or return an obsolete chart position;
+    // neither must be accepted as the surface origin by the viewer.
+    CHECK_FALSE(projectSurfaceForNavigation(*surface,world,4,&sharedIndex));
+
+    auto checkProjection = [&](const cv::Vec3f& target) {
+        editor.flushEditSurfacePatchIndex();
+        const auto projected=projectSurfaceForNavigation(*surface,target,4,editor.preferredSurfacePatchIndex());
+        REQUIRE(projected);
+        const auto scale=surface->scale();
+        const cv::Vec3f ptr((*projected)[0]*scale[0],(*projected)[1]*scale[1],0);
+        CHECK(cv::norm(surface->coord(ptr)-target)<.01f);
+    };
+    checkProjection(world);
+
+    auto edited=padded.clone();
+    std::vector<SegmentationEditManager::GridKey> changed;
+    for (int r=19;r<=20;++r) for (int c=19;c<=20;++c) {
+        edited(r,c)[2]+=12;
+        changed.push_back({r,c});
+    }
+    REQUIRE(editor.setPreviewPointsOnly(edited,changed,true));
+    checkProjection(world+cv::Vec3f(0,0,12));
+    editor.applyPreview();
+    checkProjection(world+cv::Vec3f(0,0,12));
+    REQUIRE(sharedIndex.updateSurface(surface));
+    CHECK(projectSurfaceForNavigation(*surface,world+cv::Vec3f(0,0,12),4,&sharedIndex));
+
+    original.copyTo(*surface->rawPointsPtr());
+    surface->invalidateCache();
+    editor.refreshFromBaseSurface();
+    checkProjection(world);
+    CHECK_FALSE(projectSurfaceForNavigation(*surface,world+cv::Vec3f(0,0,30),4,editor.preferredSurfacePatchIndex()));
+}
 
 TEST_CASE("manual brush includes newly grown vertices and preserves the cancel baseline")
 {

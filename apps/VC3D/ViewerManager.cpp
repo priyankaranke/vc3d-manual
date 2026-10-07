@@ -536,6 +536,18 @@ SurfacePatchIndex* ViewerManager::surfacePatchIndexIfReady()
     return &_surfacePatchIndex;
 }
 
+SurfacePatchIndex* ViewerManager::surfacePatchIndexForSurface(const SurfacePatchIndex::SurfacePtr& surface)
+{
+    // The shared index deliberately stays unchanged during interactive edits.
+    // Its grid indices are no longer usable after the edit chart is padded.
+    if (_segmentationModule && _segmentationModule->activeBaseSurfaceShared() == surface) {
+        auto* index = activeSegmentationEditSurfacePatchIndex();
+        if (index) index->flushPendingUpdates(surface);
+        return index;
+    }
+    return surfacePatchIndex();
+}
+
 SurfacePatchIndex* ViewerManager::activeSegmentationEditSurfacePatchIndex() const
 {
     return _segmentationModule ? _segmentationModule->activeEditSurfacePatchIndex() : nullptr;

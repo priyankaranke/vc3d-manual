@@ -234,9 +234,11 @@ void SegmentationManualAddPanel::syncUiState(bool editingEnabled, bool manualAdd
         _btnRecompute->setEnabled(editingEnabled && manualAddActive);
     }
     if (_btnApplyExit) {
+        _btnApplyExit->setText(_directCT->isChecked() ? tr("Done editing") : tr("Apply && Exit"));
         _btnApplyExit->setEnabled(editingEnabled && manualAddActive);
     }
     if (_btnCancel) {
+        _btnCancel->setVisible(!_directCT->isChecked());
         _btnCancel->setEnabled(editingEnabled && manualAddActive);
     }
     if (_btnClearPending) {

@@ -15,7 +15,7 @@ std::optional<std::pair<int,bool>> channelScale(int pixels, int nodes) {
 }
 }
 
-bool SegmentationModule::publishPointGrowPreview()
+bool SegmentationModule::publishPointGrowPreview(bool autosave)
 {
     if (!_pointGrowTool.active() || !_pointGrowSnapshot || !_editManager) return false;
     auto surface = _editManager->baseSurface();
@@ -51,6 +51,23 @@ bool SegmentationModule::publishPointGrowPreview()
     if (_state) _state->setSurface("segmentation",surface,false,true);
     emitPendingChanges();
     refreshOverlay();
+    if (autosave) {
+        const auto offset = _pointGrowTool.offset();
+        auto gridOffset = utils::Json::array();
+        gridOffset.push_back(offset.x); gridOffset.push_back(offset.y);
+        surface->meta["grid_offset"] = gridOffset;
+        surface->meta["manual_ct_extension"] = true;
+        const auto delta = offset - _pointGrowPublishedOffset;
+        if (delta != cv::Point()) {
+            applyCorrectionAnchorOffset(delta.x, delta.y);
+            saveCorrectionPoints(surface->path);
+            _pointGrowPublishedOffset = offset;
+        }
+        // Undo can remove earlier additions, and padding changes grid indices.
+        // Persist the current complete chart, never deltas against an old save.
+        _forceFullSurfaceAutosave = true;
+        markAutosaveNeeded(true);
+    }
     return true;
 }
 
@@ -61,36 +78,38 @@ bool SegmentationModule::finishPointGrow(bool apply)
     auto surface = _editManager->baseSurface();
     if (!surface) return false;
     if (apply && _pointGrowTool.changed()) {
-        if (!publishPointGrowPreview()) return false;
-        _undoHistory.captureSurface(_pointGrowSnapshot);
-        const auto offset = _pointGrowTool.offset();
-        if (!surface->meta.is_object()) surface->meta = utils::Json::object();
-        auto gridOffset = utils::Json::array();
-        gridOffset.push_back(offset.x); gridOffset.push_back(offset.y);
-        surface->meta["grid_offset"] = gridOffset;
-        surface->meta["manual_ct_extension"] = true;
-        // Existing controls keep their physical location after chart padding.
-        applyCorrectionAnchorOffset(offset.x,offset.y);
-        saveCorrectionPoints(surface->path);
+        // Keep individual click/stroke undo after leaving the tool. The oldest
+        // state also restores the original chart dimensions and channels.
+        std::vector<std::shared_ptr<QuadSurface>> previousStates;
+        while (previousStates.size() < 20 && _pointGrowTool.undo()) {
+            auto previous = _pointGrowTool.changed()
+                ? segmentation::snapshotSurface(*surface) : _pointGrowSnapshot;
+            if (_pointGrowTool.changed()) {
+                _pointGrowTool.points().copyTo(*previous->rawPointsPtr());
+                previous->invalidateCache();
+            }
+            previousStates.push_back(std::move(previous));
+        }
+        for (auto it = previousStates.rbegin(); it != previousStates.rend(); ++it)
+            _undoHistory.captureSurface(*it);
         _editManager->applyPreview();
-        _pendingAutosaveVertexUpdates.clear();
-        _pendingAutosaveVertexUpdateIndex.clear();
-        _saveSnapshot.reset();
-        // A complete snapshot is required because the grid and ancillary
-        // channels may have grown. The ordinary atomic tifxyz save runs async.
-        markAutosaveNeeded(true);
-        emit statusMessageRequested(tr("Manual edits applied; saving the tifxyz segment."),kStatusMedium);
+        emit statusMessageRequested(tr("Editing finished. Changes save automatically."),kStatusShort);
     } else {
         // Clear queued vertex edits before refreshing. Otherwise refresh would
         // replay their padded grid indices onto the restored, smaller chart.
         _editManager->resetPreview();
         segmentation::restoreSurface(*surface,*_pointGrowSnapshot);
         _editManager->refreshFromBaseSurface();
-        emit statusMessageRequested(tr("Manual edits canceled; original surface restored."),kStatusShort);
+        if (_pointGrowPublishedOffset != cv::Point()) {
+            applyCorrectionAnchorOffset(-_pointGrowPublishedOffset.x,-_pointGrowPublishedOffset.y);
+            saveCorrectionPoints(surface->path);
+        }
+        emit statusMessageRequested(tr("Editing finished; starting geometry restored."),kStatusShort);
     }
     _pointGrowTool.clear();
     _editManager->setAllowNewVertexEdits(false);
     _pointGrowSnapshot.reset();
+    _pointGrowPublishedOffset = {};
     _manualAddTool->clear();
     _manualAddMode = false;
     emit manualAddModeChanged(false);
@@ -99,8 +118,11 @@ bool SegmentationModule::finishPointGrow(bool apply)
         _widget->setManualAddActive(false);
         _widget->setGrowthMethod(_previousGrowthMethodBeforeManualAdd);
     }
+    if (_viewerManager) _viewerManager->refreshSurfacePatchIndex(surface);
     if (_state) _state->setSurface("segmentation",surface,false,true);
     emitPendingChanges();
     refreshOverlay();
+    _forceFullSurfaceAutosave = true;
+    markAutosaveNeeded(true);
     return true;
 }

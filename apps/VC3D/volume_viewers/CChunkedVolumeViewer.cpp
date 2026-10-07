@@ -1,5 +1,6 @@
 #include "CChunkedVolumeViewer.hpp"
 #include "SurfacePreviewFootprint.hpp"
+#include "SurfaceNavigation.hpp"
 
 #include "CState.hpp"
 #include "elements/ViewerStatsBar.hpp"
@@ -266,7 +267,7 @@ SafeFocusProjection validateSafeFocusProjection(
         return result;
     }
 
-    if (!pointToDistance) {
+    if (focusWorld || !pointToDistance) {
         result.dist = focusWorld ? distance3(result.coord, *focusWorld) : 0.0f;
         if (!std::isfinite(result.dist) ||
             result.dist < 0.0f ||
@@ -1089,14 +1090,11 @@ void CChunkedVolumeViewer::onSurfaceChanged(const std::string& name,
                 _surfacePtrY = projected[1];
             }
         } else if (auto* quad = dynamic_cast<QuadSurface*>(surf.get())) {
-            cv::Vec3f ptr = quad->pointer();
-            auto* patchIndex = _viewerManager ? _viewerManager->surfacePatchIndex() : nullptr;
-            if (quad->pointTo(ptr, *preservedViewCenter, 4.0f, 100, patchIndex) >= 0.0f) {
-                const cv::Vec3f loc = quad->loc(ptr);
-                if (std::isfinite(loc[0]) && std::isfinite(loc[1])) {
-                    _surfacePtrX = loc[0];
-                    _surfacePtrY = loc[1];
-                }
+            auto* patchIndex = _viewerManager ?
+                _viewerManager->surfacePatchIndexForSurface(std::static_pointer_cast<QuadSurface>(surf)) : nullptr;
+            if (const auto loc = projectSurfaceForNavigation(*quad, *preservedViewCenter, 4.0f, patchIndex)) {
+                _surfacePtrX = (*loc)[0];
+                _surfacePtrY = (*loc)[1];
             }
         }
     }
@@ -2485,11 +2483,10 @@ void CChunkedVolumeViewer::centerOnVolumePoint(const cv::Vec3f& point, bool forc
         surfacePoint = {projected[0], projected[1]};
         haveSurfacePoint = true;
     } else if (auto* quad = dynamic_cast<QuadSurface*>(surf.get())) {
-        cv::Vec3f ptr = quad->pointer();
-        auto* patchIndex = _viewerManager ? _viewerManager->surfacePatchIndex() : nullptr;
-        if (quad->pointTo(ptr, point, 4.0f, 100, patchIndex) >= 0.0f) {
-            const cv::Vec3f loc = quad->loc(ptr);
-            surfacePoint = {loc[0], loc[1]};
+        auto* patchIndex = _viewerManager ?
+            _viewerManager->surfacePatchIndexForSurface(std::static_pointer_cast<QuadSurface>(surf)) : nullptr;
+        if (const auto loc = projectSurfaceForNavigation(*quad, point, 4.0f, patchIndex)) {
+            surfacePoint = *loc;
             haveSurfacePoint = true;
         }
     }
@@ -3069,20 +3066,14 @@ QPointF CChunkedVolumeViewer::volumeToScene(const cv::Vec3f& volPoint)
         return surfaceToScene(proj[0], proj[1]);
     }
     if (auto* quad = dynamic_cast<QuadSurface*>(surf.get())) {
-        cv::Vec3f ptr = quad->pointer();
-        auto* patchIndex = _viewerManager ? _viewerManager->surfacePatchIndex() : nullptr;
+        auto* patchIndex = _viewerManager ?
+            _viewerManager->surfacePatchIndexForSurface(std::static_pointer_cast<QuadSurface>(surf)) : nullptr;
         // Match the points-overlay default view tolerance so points that are meant to
         // render faded still project to their true location rather than collapsing.
         constexpr float kQuadProjectTolerance = 10.0f;
-        // pointTo() with a patch index signals "no surface point within tolerance" by
-        // returning a positive value (~the tolerance) WITHOUT updating ptr, so a bare
-        // `< 0.0f` check would silently keep ptr at {0,0,0} and map the point to the
-        // segment center. Treat anything outside the tolerance as a failed projection.
-        const float dist = quad->pointTo(ptr, volPoint, kQuadProjectTolerance, 100, patchIndex);
-        if (dist < 0.0f || dist > kQuadProjectTolerance)
-            return {NAN, NAN};
-        const cv::Vec3f loc = quad->loc(ptr);
-        return surfaceToScene(loc[0], loc[1]);
+        if (const auto loc = projectSurfaceForNavigation(*quad, volPoint, kQuadProjectTolerance, patchIndex))
+            return surfaceToScene((*loc)[0], (*loc)[1]);
+        return {NAN, NAN};
     }
     return {};
 }
@@ -3909,7 +3900,7 @@ void CChunkedVolumeViewer::renderFlattenedIntersections(const std::shared_ptr<Su
         return;
     }
 
-    auto* patchIndex = _viewerManager ? _viewerManager->surfacePatchIndex() : nullptr;
+    auto* patchIndex = _viewerManager ? _viewerManager->surfacePatchIndexForSurface(activeSeg) : nullptr;
     if (!patchIndex || patchIndex->empty()) {
         invalidateIntersect();
         _lastIntersectFp = {};
@@ -3969,7 +3960,7 @@ void CChunkedVolumeViewer::renderFlattenedIntersections(const std::shared_ptr<Su
     fp.surfaceCount = patchIndex->surfaceCount();
     fp.activeSegHash = std::hash<const void*>{}(activeSeg.get());
     const uint64_t activeGeneration = patchIndex->generation(activeSeg);
-    fp.targetGenerationHash = 0;
+    fp.targetGenerationHash = activeGeneration;
 
     // Flattened intersections are built in surface-view scene coordinates.
     // Pan/zoom can reuse the same paths by transforming the existing items.
@@ -4024,7 +4015,9 @@ void CChunkedVolumeViewer::renderFlattenedIntersections(const std::shared_ptr<Su
         _flattenedIntersectionCache.valid &&
         _flattenedIntersectionCache.surface == activeSeg.get() &&
         _flattenedIntersectionCache.planesHash == planesHash &&
-        _flattenedIntersectionCache.indexSamplingStride == stride;
+        _flattenedIntersectionCache.indexSamplingStride == stride &&
+        (_flattenedIntersectionCache.generation == activeGeneration ||
+         _flattenedIntersectionDirtyCells.has_value());
     const bool displayOnlyRefresh =
         cacheCompatible &&
         !_flattenedIntersectionDirtyCells;
