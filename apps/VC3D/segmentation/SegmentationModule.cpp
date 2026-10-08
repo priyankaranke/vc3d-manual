@@ -557,6 +557,10 @@ void SegmentationModule::bindViewerSignals(VolumeViewerBase* viewer)
     }
 
     if (auto* chunkedViewer = qobject_cast<CChunkedVolumeViewer*>(viewerObject)) {
+        connect(chunkedViewer->graphicsView(), &CVolumeViewerView::sendRightClick,
+                this, [this, viewer](const QPointF& scenePos) {
+                    deletePointGrowVertex(viewer, scenePos);
+                });
         connect(chunkedViewer, &CChunkedVolumeViewer::sendMousePressVolume,
                 this, [this, viewer](const cv::Vec3f& worldPos,
                                      const cv::Vec3f& normal,
@@ -2134,7 +2138,7 @@ void SegmentationModule::setViewOnly(bool enabled)
     emit viewOnlyChanged(enabled);
     emit statusMessageRequested(enabled
         ? tr("View only: segment editing is paused.")
-        : tr("Click CT or use A/D to edit. Changes save automatically; Cmd/Ctrl+Z undoes."), kStatusShort);
+        : tr("Click CT to add/edit; right-click a point to delete; A/D pushes/pulls. Changes save automatically."), kStatusShort);
 }
 
 bool SegmentationModule::ensureDirectCTEditing()
@@ -2215,7 +2219,7 @@ bool SegmentationModule::beginManualAdd()
     _widget->setManualAddActive(true);
     refreshOverlay();
     emit statusMessageRequested(_pointGrowTool.active()
-        ? tr("Click CT or use A/D to edit. Changes save automatically. Cmd/Ctrl+Z undoes; View only pauses editing.")
+        ? tr("Click CT to add/edit; right-click a point to delete; A/D pushes/pulls. Cmd/Ctrl+Z undoes; View only pauses editing.")
         : tr("Shift+E applies Manual Add; Escape cancels."), kStatusShort);
     return true;
 }

@@ -51,6 +51,51 @@ void PointGrowTool::pad(int amount) {
         }
 }
 
+std::optional<PointGrowTool::GridKey> PointGrowTool::pickPointNearSlice(
+    const cv::Vec3f& world, const cv::Vec3f& normal, float pixelsPerVoxel,
+    float radiusPixels, float sliceTolerance) const
+{
+    const double normalLength = cv::norm(normal);
+    if (!valid(world) || !std::isfinite(normalLength) || normalLength < 1e-6 ||
+        !std::isfinite(pixelsPerVoxel) || pixelsPerVoxel <= 0 ||
+        !std::isfinite(radiusPixels) || radiusPixels <= 0 ||
+        !std::isfinite(sliceTolerance) || sliceTolerance < 0) return std::nullopt;
+    const cv::Vec3d n = cv::Vec3d(normal) / normalLength;
+    const double radius = radiusPixels / pixelsPerVoxel;
+    double bestDistance = radius * radius;
+    double bestDepth = std::numeric_limits<double>::max();
+    std::optional<GridKey> best;
+    for (int r = 0; r < _points.rows; ++r) for (int c = 0; c < _points.cols; ++c) {
+        if (!valid(_points(r,c))) continue;
+        const cv::Vec3d delta = cv::Vec3d(_points(r,c)) - cv::Vec3d(world);
+        const double depth = std::abs(delta.dot(n));
+        if (depth > sliceTolerance) continue;
+        const double distance = std::max(0.0, delta.dot(delta) - depth * depth);
+        if (distance < bestDistance || (distance == bestDistance && depth < bestDepth)) {
+            best = GridKey{r,c}; bestDistance = distance; bestDepth = depth;
+        }
+    }
+    return best;
+}
+
+bool PointGrowTool::removePoint(GridKey key, std::string& status)
+{
+    const cv::Point grid(key.col, key.row);
+    if (!inside(_points, grid) || !valid(_points(grid))) {
+        status = "Right-click directly on a mesh point near the current slice.";
+        return false;
+    }
+    Undo undo; undo.anchors = _anchors;
+    undo.changes.push_back({grid, _points(grid)});
+    _points(grid) = {-1,-1,-1};
+    _anchors.erase(std::remove_if(_anchors.begin(), _anchors.end(),
+        [&](const Anchor& anchor) { return anchor.grid == grid; }), _anchors.end());
+    _undo.push_back(std::move(undo));
+    _redo.clear();
+    status = "Point deleted. Changes save automatically; Cmd/Ctrl+Z restores it.";
+    return true;
+}
+
 bool PointGrowTool::addPoint(const cv::Vec3f& world, int width, std::string& status) {
     if (!active() || !valid(world)) { status = "Choose a point inside the CT volume."; return false; }
     std::optional<PointGrowTool> beforePadding;
@@ -101,7 +146,7 @@ bool PointGrowTool::addPoint(const cv::Vec3f& world, int width, std::string& sta
         status = "Click closer to the edge (within 12 grid steps), then continue outward."; return false;
     }
     cv::Point target = nearest + cv::Point(std::lround(dc), std::lround(dr));
-    const bool touchUp = inside(_original, target) && valid(_original(target));
+    const bool touchUp = inside(_original, target) && valid(_original(target)) && valid(_points(target));
     if (target.x < width + 4 || target.y < width + 4 ||
         target.x >= _points.cols - width - 4 || target.y >= _points.rows - width - 4) {
         beforePadding = *this;
@@ -134,7 +179,7 @@ bool PointGrowTool::addPoint(const cv::Vec3f& world, int width, std::string& sta
         std::vector<cv::Point> fill;
         for (int r = region.y; r < region.br().y; ++r) for (int c = region.x; c < region.br().x; ++c) {
             cv::Point p(c,r);
-            if (!inside(_points,p) || valid(_original(p))) continue;
+            if (!inside(_points,p) || (valid(_original(p)) && valid(_points(p)))) continue;
             // New strips attach to the existing grid; a correction only refits a
             // small neighbourhood of a point added in this session.
             if (distanceToLine(p,nearest,target) <= width &&

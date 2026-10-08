@@ -50,6 +50,7 @@ signals:
     void sendPanStart(Qt::MouseButton, Qt::KeyboardModifiers);
     void sendCursorMove(QPointF);
     void sendMousePress(QPointF, Qt::MouseButton, Qt::KeyboardModifiers);
+    void sendRightClick(QPointF);
     void sendMouseDoubleClick(QPointF, Qt::MouseButton, Qt::KeyboardModifiers);
     void sendMouseMove(QPointF, Qt::MouseButtons, Qt::KeyboardModifiers);
     void sendMouseRelease(QPointF, Qt::MouseButton, Qt::KeyboardModifiers);
@@ -66,6 +67,8 @@ protected:
     QPoint _last_pan_position;
     bool _left_button_pressed = false;
     bool _right_button_mouse_forwarded = false;
+    bool _rightClickPending = false;
+    QPoint _rightClickPosition;
     bool _tiltHandleDragging = false;
     /// Draw our scalebar on every repaint
     void drawForeground(QPainter* painter, const QRectF& sceneRect) override;

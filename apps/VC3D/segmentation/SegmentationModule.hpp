@@ -334,6 +334,7 @@ private:
     void resetManualAddState(bool restorePreview);
     bool recomputeManualAdd(bool refit = true);
     bool publishPointGrowPreview(bool autosave = true);
+    void deletePointGrowVertex(VolumeViewerBase* viewer, const QPointF& scenePos);
     bool finishPointGrow(bool apply);
     bool clearManualAddPending();
     bool undoManualAddPlaneConstraint();

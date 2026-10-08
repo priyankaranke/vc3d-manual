@@ -55,6 +55,7 @@ int main(int argc, char** argv)
     QSignalSpy panSpy(&view, &CVolumeViewerView::sendPanStart);
     QSignalSpy panReleaseSpy(&view, &CVolumeViewerView::sendPanRelease);
     QSignalSpy pressSpy(&view, &CVolumeViewerView::sendMousePress);
+    QSignalSpy rightClickSpy(&view, &CVolumeViewerView::sendRightClick);
     QSignalSpy moveSpy(&view, &CVolumeViewerView::sendMouseMove);
     QSignalSpy clickSpy(&view, &CVolumeViewerView::sendVolumeClicked);
     QSignalSpy releaseSpy(&view, &CVolumeViewerView::sendMouseRelease);
@@ -76,6 +77,8 @@ int main(int argc, char** argv)
     QTest::mouseRelease(view.viewport(), Qt::RightButton, Qt::NoModifier, pos);
     require(panReleaseSpy.count() == 1,
             "Plain Right pan did not emit pan release");
+    require(rightClickSpy.count() == 1,
+            "Plain right-click did not emit a completed click for mesh deletion");
 
     QTest::mousePress(view.viewport(), Qt::RightButton, Qt::ShiftModifier, pos);
     QTest::mouseMove(view.viewport(), pos + QPoint(4, 3), Qt::ShiftModifier);
@@ -143,6 +146,20 @@ int main(int argc, char** argv)
     QEvent leaveEvent(QEvent::Leave);
     QApplication::sendEvent(view.viewport(), &leaveEvent);
     require(leaveSpy.count() == 1, "Leave event did not emit mouse-left-view signal");
+
+    const auto clicksBeforeDrag = rightClickSpy.count();
+    QTest::mousePress(view.viewport(), Qt::RightButton, Qt::NoModifier, pos);
+    QTest::mouseMove(view.viewport(), pos + QPoint(QApplication::startDragDistance()+10, 0));
+    QTest::mouseMove(view.viewport(), pos);
+    QTest::mouseRelease(view.viewport(), Qt::RightButton, Qt::NoModifier, pos);
+    require(rightClickSpy.count() == clicksBeforeDrag,
+            "Right-drag returning to its start must not delete a point");
+    QTest::mousePress(view.viewport(), Qt::RightButton, Qt::ControlModifier, pos);
+    QTest::mouseRelease(view.viewport(), Qt::RightButton, Qt::ControlModifier, pos);
+    QTest::mousePress(view.viewport(), Qt::RightButton, Qt::ShiftModifier, pos);
+    QTest::mouseRelease(view.viewport(), Qt::RightButton, Qt::ShiftModifier, pos);
+    require(rightClickSpy.count() == clicksBeforeDrag,
+            "Modified right clicks must not delete mesh points");
 
     return 0;
 }

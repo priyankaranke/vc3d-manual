@@ -3,7 +3,9 @@
 #include "CState.hpp"
 #include "ViewerManager.hpp"
 #include "tools/SegmentationPushPullTool.hpp"
+#include "vc/core/util/PlaneSurface.hpp"
 #include <QElapsedTimer>
+#include <cmath>
 
 namespace {
 // Ancillary images can be stored on either a cell raster (N*k) or a vertex
@@ -13,6 +15,58 @@ std::optional<std::pair<int,bool>> channelScale(int pixels, int nodes) {
     if (nodes > 1 && (pixels-1) % (nodes-1) == 0) return {{(pixels-1)/(nodes-1),true}};
     return std::nullopt;
 }
+}
+
+void SegmentationModule::deletePointGrowVertex(VolumeViewerBase* viewer, const QPointF& scenePos)
+{
+    if (!viewer || _viewOnly || _growthInProgress || !_widget ||
+        !_widget->manualAddConfig().directCT) return;
+    auto* plane = dynamic_cast<PlaneSurface*>(viewer->currentSurface());
+    auto* quad = viewer->surfName() == "segmentation"
+        ? dynamic_cast<QuadSurface*>(viewer->currentSurface()) : nullptr;
+    if (!plane && !quad) return;
+    if (plane && viewer->isPlaneCompositeEnabled()) {
+        emit statusMessageRequested(tr("Turn off CT compositing to pick an exact slice position."), kStatusMedium);
+        return;
+    }
+    if (!ensureDirectCTEditing()) return;
+    if (_pushPullTool) _pushPullTool->stopAll(false);
+
+    std::optional<PointGrowTool::GridKey> key;
+    if (plane) {
+        key = _pointGrowTool.pickPointNearSlice(viewer->sceneToVolume(scenePos),
+            plane->normal({0,0,0}), viewer->getCurrentScale());
+    } else {
+        // Use chart coordinates so folds and holes cannot select another sheet.
+        // Before the first edit, the tool's initial padding is not published yet.
+        const auto scale = quad->scale();
+        const auto center = quad->center();
+        const auto location = viewer->sceneToSurfaceCoords(scenePos);
+        if (scale[0] <= 0 || scale[1] <= 0 ||
+            !std::isfinite(location[0]) || !std::isfinite(location[1])) return;
+        const int col = static_cast<int>(std::lround((location[0] + center[0]) * scale[0]));
+        const int row = static_cast<int>(std::lround((location[1] + center[1]) * scale[1]));
+        const QPointF projected = viewer->surfaceCoordsToScene(col / scale[0] - center[0],
+                                                              row / scale[1] - center[1]);
+        const QPointF delta = projected - scenePos;
+        if (delta.x()*delta.x() + delta.y()*delta.y() <= 12.0*12.0) {
+            const auto& points = _pointGrowTool.points();
+            const auto size = quad->rawPoints().size();
+            key = PointGrowTool::GridKey{row + (points.rows - size.height)/2,
+                                         col + (points.cols - size.width)/2};
+        }
+    }
+    std::string status = "Right-click directly on a mesh point near the current slice.";
+    if (key && _pointGrowTool.removePoint(*key, status)) {
+        if (!publishPointGrowPreview()) {
+            _pointGrowTool.undo();
+            return;
+        }
+        _redoHistory.clear();
+        _hover.clear();
+        refreshOverlay();
+    }
+    emit statusMessageRequested(QString::fromStdString(status), kStatusMedium);
 }
 
 bool SegmentationModule::publishPointGrowPreview(bool autosave)

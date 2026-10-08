@@ -4,6 +4,7 @@
 #include "segmentation/tools/ThinPlateSpline3d.hpp"
 #include "vc/core/util/QuadSurface.hpp"
 #include "volume_viewers/SurfacePreviewFootprint.hpp"
+#include <QTemporaryDir>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -211,6 +212,78 @@ TEST_CASE("surface preview never interpolates invalid sentinel borders into CT")
             REQUIRE(std::isfinite(normals(y,x)[0]));
             REQUIRE(coords(y,x)[0]>1000);
         }
+    }
+}
+
+TEST_CASE("deleting an imported vertex preserves neighbours and round trips with exact undo and redo") {
+    PointGrowTool tool; REQUIRE(tool.begin(plane()));
+    const auto before = tool.points().clone();
+    const PointGrowTool::GridKey key{5+tool.offset().y,5+tool.offset().x};
+    std::string status;
+    REQUIRE(tool.removePoint(key,status));
+    auto expected = before.clone(); expected(key.row,key.col)={-1,-1,-1};
+    REQUIRE(cv::norm(tool.points(),expected,cv::NORM_INF)==0);
+    REQUIRE(tool.changedVertices().size()==1);
+    QTemporaryDir output; REQUIRE(output.isValid());
+    const auto path = (output.path()+"/deleted").toStdString();
+    QuadSurface saved(tool.points(),{.05f,.05f}); saved.save(path,"deleted",true);
+    QuadSurface loaded(path); loaded.ensureLoaded();
+    REQUIRE(cv::norm(loaded.rawPoints(),expected,cv::NORM_INF)==0);
+    REQUIRE(tool.undo()); REQUIRE(cv::norm(tool.points(),before,cv::NORM_INF)==0);
+    // Missing/invalid clicks must preserve the pending redo.
+    REQUIRE_FALSE(tool.removePoint({-1,-1},status));
+    REQUIRE_FALSE(tool.removePoint({0,0},status));
+    REQUIRE(tool.redo()); REQUIRE(cv::norm(tool.points(),expected,cv::NORM_INF)==0);
+    REQUIRE_FALSE(tool.removePoint(key,status));
+    REQUIRE(tool.undo()); REQUIRE_FALSE(tool.changed());
+}
+
+TEST_CASE("a deleted click removes its constraint and deletion shares history with brush strokes") {
+    PointGrowTool tool; REQUIRE(tool.begin(plane())); std::string status;
+    const cv::Vec3f anchor(1280,1100,1002);
+    REQUIRE(tool.addPoint(anchor,2,status));
+    auto key=tool.pickPointNearSlice(anchor,{0,0,1},1);
+    REQUIRE(key.has_value());
+    auto brushed=tool.points().clone(); brushed(key->row,key->col)[2]+=3;
+    REQUIRE(tool.adoptPreview(brushed));
+    const auto anchors=tool.anchors();
+    REQUIRE(tool.removePoint(*key,status)); REQUIRE(tool.anchors().empty());
+    REQUIRE(tool.undo()); REQUIRE(tool.anchors()==anchors);
+    REQUIRE(cv::norm(tool.points(),brushed,cv::NORM_INF)==0);
+    REQUIRE(tool.undo()); REQUIRE(tool.anchors().back()==anchor);
+    REQUIRE(tool.redo()); REQUIRE(tool.redo()); REQUIRE(tool.anchors().empty());
+    REQUIRE(tool.points()(key->row,key->col)==cv::Vec3f(-1,-1,-1));
+}
+
+TEST_CASE("a deleted original vertex can be filled again without displacing its neighbours") {
+    PointGrowTool tool; REQUIRE(tool.begin(plane())); std::string status;
+    const auto before=tool.points().clone();
+    const PointGrowTool::GridKey key{5+tool.offset().y,5+tool.offset().x};
+    REQUIRE(tool.removePoint(key,status));
+    const auto removed=tool.points().clone();
+    const cv::Vec3f corrected=before(key.row,key.col)+cv::Vec3f(0,0,2);
+    REQUIRE_MESSAGE(tool.addPoint(corrected,1,status),status);
+    auto expected=before.clone(); expected(key.row,key.col)=corrected;
+    REQUIRE(cv::norm(tool.points(),expected,cv::NORM_INF)==0);
+    REQUIRE(tool.undo()); REQUIRE(cv::norm(tool.points(),removed,cv::NORM_INF)==0);
+    REQUIRE(tool.undo()); REQUIRE(cv::norm(tool.points(),before,cv::NORM_INF)==0);
+    REQUIRE(tool.redo()); REQUIRE(tool.redo());
+    REQUIRE(cv::norm(tool.points(),expected,cv::NORM_INF)==0);
+}
+
+TEST_CASE("slice deletion picking respects zoom and depth in all CT orientations") {
+    for (int axis=0;axis<3;++axis) {
+        const auto source=plane(axis); PointGrowTool tool; REQUIRE(tool.begin(source));
+        const PointGrowTool::GridKey expected{5+tool.offset().y,5+tool.offset().x};
+        cv::Vec3f n(0,0,0); n[axis==0?2:axis==1?1:0]=1;
+        const auto p=source(5,5), tangent=(source(5,6)-p)/20.0f;
+        REQUIRE(tool.pickPointNearSlice(p,n,1)==expected);
+        REQUIRE(tool.pickPointNearSlice(p+6*tangent,n,1)==expected);
+        REQUIRE_FALSE(tool.pickPointNearSlice(p+6*tangent,n,3).has_value());
+        REQUIRE_FALSE(tool.pickPointNearSlice(p+11*n,n,1).has_value());
+        REQUIRE_FALSE(tool.pickPointNearSlice(p,n,0).has_value());
+        std::string status; REQUIRE(tool.removePoint(expected,status));
+        REQUIRE_FALSE(tool.pickPointNearSlice(p,n,1).has_value());
     }
 }
 

@@ -14,6 +14,13 @@ public:
     using GridKey = SegmentationEditManager::GridKey;
     bool begin(const cv::Mat_<cv::Vec3f>& points);
     bool addPoint(const cv::Vec3f& world, int width, std::string& status);
+    // Pick only close, visible vertices in a CT slice, including imported ones.
+    std::optional<GridKey> pickPointNearSlice(const cv::Vec3f& world,
+                                            const cv::Vec3f& normal,
+                                            float pixelsPerVoxel,
+                                            float radiusPixels = 12.0f,
+                                            float sliceTolerance = 10.0f) const;
+    bool removePoint(GridKey key, std::string& status);
     // Record one native brush stroke in the same history as CT clicks.
     bool adoptPreview(const cv::Mat_<cv::Vec3f>& points, bool* changed = nullptr);
     bool undo();

@@ -1,5 +1,6 @@
 #include "CVolumeViewerView.hpp"
 
+#include <QApplication>
 #include <QGraphicsView>
 #include <QGraphicsProxyWidget>
 #include <QMouseEvent>
@@ -313,6 +314,10 @@ void CVolumeViewerView::mouseReleaseEvent(QMouseEvent *event)
             _regular_pan = false;
             sendPanRelease(event->button(), event->modifiers());
         }
+        const bool clicked = _rightClickPending && event->modifiers() == Qt::NoModifier &&
+            (event->position().toPoint() - _rightClickPosition).manhattanLength() < QApplication::startDragDistance();
+        _rightClickPending = false;
+        if (clicked) emit sendRightClick(mapToScene(event->position().toPoint()));
         return;
     }
     else if (event->button() == Qt::LeftButton)
@@ -401,6 +406,7 @@ void CVolumeViewerView::mousePressEvent(QMouseEvent *event)
     }
     else if (event->button() == Qt::RightButton)
     {
+        _rightClickPending = false;
         if (event->modifiers().testFlag(Qt::ShiftModifier)) {
             QPointF global_loc = viewport()->mapFromGlobal(event->globalPosition());
             QPointF scene_loc = mapToScene({int(global_loc.x()),int(global_loc.y())});
@@ -420,6 +426,8 @@ void CVolumeViewerView::mousePressEvent(QMouseEvent *event)
             return;
         }
 
+        _rightClickPending = event->modifiers() == Qt::NoModifier;
+        _rightClickPosition = event->position().toPoint();
         _regular_pan = true;
         _last_pan_position = QPoint(event->position().x(), event->position().y());
         sendPanStart(event->button(), event->modifiers());
@@ -480,6 +488,10 @@ void CVolumeViewerView::mouseMoveEvent(QMouseEvent *event)
 
     if (_regular_pan)
     {
+        // A drag stays a pan even if it returns to its starting position.
+        if (_rightClickPending &&
+            (event->position().toPoint() - _rightClickPosition).manhattanLength() >= QApplication::startDragDistance())
+            _rightClickPending = false;
         if (!_scrollPanDisabled) {
             QPoint scroll = _last_pan_position - QPoint(event->position().x(), event->position().y());
 
