@@ -76,6 +76,12 @@ bool SegmentationModule::beginEditingSession(std::shared_ptr<QuadSurface> surfac
     _pendingAutosaveVertexUpdateIndex.clear();
     _saveSnapshot.reset();
     updateAutosaveState();
+    // Imported/manual segments may not have area metadata yet. Populate it
+    // through the same background save path used for subsequent edits.
+    if (!surface->path.empty() && !surface->id.empty() &&
+        (!surface->meta.contains("area_vx2") || !surface->meta.contains("area_cm2"))) {
+        markAutosaveNeeded(true);
+    }
     return true;
 }
 

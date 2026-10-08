@@ -7453,7 +7453,7 @@ void CWindow::CreateWidgets(void)
                         QTreeWidgetItemIterator it(treeWidgetSurfaces);
                         while (*it) {
                             if ((*it)->data(SURFACE_ID_COLUMN, Qt::UserRole).toString().toStdString() == r.segmentId) {
-                                (*it)->setText(2, QString::number(r.areaCm2, 'f', 3));
+                                (*it)->setText(SURFACE_AREA_COLUMN, QString::number(r.areaCm2, 'f', 3));
                                 break;
                             }
                             ++it;
@@ -7618,6 +7618,8 @@ void CWindow::CreateWidgets(void)
             this, &CWindow::onGrowSegmentationSurface);
     connect(_segmentationModule.get(), &SegmentationModule::approvalMaskSaved,
             _fileWatcher.get(), &FileWatcherService::markSegmentRecentlyEdited);
+    connect(_segmentationModule.get(), &SegmentationModule::surfaceMetricsChanged,
+            _surfacePanel.get(), &SurfacePanelController::refreshSurfaceMetrics);
 
     SegmentationGrower::Context growerContext{
         _segmentationModule.get(),

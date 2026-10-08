@@ -18,6 +18,7 @@
 #include "overlays/SegmentationOverlayController.hpp"
 
 #include "vc/ui/VCCollection.hpp"
+#include "vc/core/types/Volume.hpp"
 #include "vc/core/types/VolumePkg.hpp"
 
 #include <QApplication>
@@ -48,6 +49,7 @@
 #include "utils/Json.hpp"
 
 #include "vc/core/util/QuadSurface.hpp"
+#include "vc/core/util/LoadJson.hpp"
 #include "vc/core/util/PlaneSurface.hpp"
 
 
@@ -3094,6 +3096,10 @@ void SegmentationModule::performAutosave()
     const auto savePath = surfacePtr->path;
     const auto saveId = surfacePtr->id;
     const auto saveMeta = surfacePtr->meta;
+    double voxelSize = vc::json::number_or(saveMeta, "voxelsize", 0.0);
+    if ((!std::isfinite(voxelSize) || voxelSize <= 0.0) && _state && _state->currentVolume()) {
+        voxelSize = _state->currentVolume()->voxelSize();
+    }
     const cv::Vec2f saveScale = surfacePtr->scale();
     const cv::Mat_<cv::Vec3f>* sourcePoints = surfacePtr->rawPointsPtr();
     const cv::Size sourceSize = sourcePoints ? sourcePoints->size() : cv::Size();
@@ -3128,6 +3134,7 @@ void SegmentationModule::performAutosave()
                                       savePath,
                                       saveId,
                                       saveMeta,
+                                      voxelSize,
                                       sourceSize]() mutable -> std::shared_ptr<QuadSurface> {
         if (!snapshot) {
             snapshot = std::make_shared<QuadSurface>(savePath);
@@ -3157,6 +3164,9 @@ void SegmentationModule::performAutosave()
         snapshot->path = savePath;
         snapshot->id = saveId;
         snapshot->meta = saveMeta;
+        // Measure the exact saved geometry off the UI thread, including new
+        // cells and Undo/Redo. Chart padding and flattening don't affect area.
+        updateSegmentationSurfaceMetadata(snapshot.get(), voxelSize);
         snapshot->saveOverwrite();
         return snapshot;
     });
@@ -3166,7 +3176,7 @@ void SegmentationModule::performAutosave()
     auto* pollTimer = new QTimer(this);
     pollTimer->setInterval(50);
     pollTimer->setSingleShot(false);
-    connect(pollTimer, &QTimer::timeout, this, [this, pollTimer, saveFuture, autosaveTicket]() mutable {
+    connect(pollTimer, &QTimer::timeout, this, [this, pollTimer, saveFuture, autosaveTicket, surfacePtr]() mutable {
         if (!saveFuture.isFinished()) {
             return;
         }
@@ -3195,6 +3205,16 @@ void SegmentationModule::performAutosave()
 
         if (failureMessage.isEmpty()) {
             _saveSnapshot = savedSnapshot;
+            if (!_autosaveState.pending() && !_autosaveState.dirtyAfterSave()) {
+                // Merge metrics only: a save must never replace live geometry
+                // or metadata from edits made while the worker was running.
+                for (const auto* key : {"area_vx2", "area_cm2", "date_last_modified"}) {
+                    if (savedSnapshot->meta.contains(key)) {
+                        surfacePtr->meta[key] = savedSnapshot->meta[key];
+                    }
+                }
+                emit surfaceMetricsChanged(surfacePtr->id);
+            }
             emit statusMessageRequested(tr("Saved"), kStatusShort);
         } else {
             _forceFullSurfaceAutosave = true;

@@ -214,6 +214,7 @@ signals:
                               bool inpaintOnly);
     void growthInProgressChanged(bool running);
     void approvalMaskSaved(const std::string& segmentId);
+    void surfaceMetricsChanged(const std::string& segmentId);
     void annotationPointSelected(uint64_t pointId);
     void annotationCollectionSelected(uint64_t collectionId);
     void annotationPointFocused(uint64_t pointId);
