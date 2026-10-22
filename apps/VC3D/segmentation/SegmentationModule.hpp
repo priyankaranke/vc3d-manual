@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QColor>
+#include "EditRegions.hpp"
 #include <QFuture>
 #include <QObject>
 #include <QElapsedTimer>
@@ -139,6 +140,11 @@ public:
 
     bool beginEditingSession(std::shared_ptr<QuadSurface> surface);
     void endEditingSession();
+
+    // Stitched multi-winding segments: regions (one per winding) and the one being edited (-1 = all).
+    [[nodiscard]] const std::vector<EditRegion>& editRegions() const { return _editRegions; }
+    [[nodiscard]] int editRegionIndex() const { return _editRegionIndex; }
+    void setEditRegionIndex(int index);
     [[nodiscard]] bool hasActiveSession() const;
     [[nodiscard]] QuadSurface* activeBaseSurface() const;
     [[nodiscard]] std::shared_ptr<QuadSurface> activeBaseSurfaceShared() const;
@@ -202,6 +208,8 @@ signals:
     void manualAddModeChanged(bool active);
     void viewOnlyChanged(bool enabled);
     void pushPullSettingsChanged();
+    void editRegionsChanged();
+    void editRegionChanged(int index);
     void editingEnabledChanged(bool enabled);
     void annotateModeChanged(bool enabled);
     void statusMessageRequested(const QString& text, int timeoutMs);
@@ -408,6 +416,11 @@ private:
     void performAutosave();
     void ensureAutosaveTimer();
     void updateAutosaveState();
+    void loadEditRegionsFromSurface();
+    void applyEditRegion();
+    void shiftEditRegions(int colDelta, int rowDelta);
+    void noteEditRegionRejection(int row, int col);
+    [[nodiscard]] int editRegionIndexForCell(int row, int col) const;
     void saveApprovalMaskToDisk();
     void queueAutosaveVertexUpdates(const std::vector<SegmentationEditManager::VertexEdit>& edits);
 
@@ -415,6 +428,9 @@ private:
     SegmentationEditManager* _editManager{nullptr};
     SegmentationOverlayController* _overlay{nullptr};
     ViewerManager* _viewerManager{nullptr};
+    std::vector<EditRegion> _editRegions;
+    int _editRegionIndex{-1};
+    QElapsedTimer _editRegionMessageTimer;
     CState* _state{nullptr};
     VCCollection* _pointCollection{nullptr};
 

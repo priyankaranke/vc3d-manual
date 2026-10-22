@@ -153,6 +153,15 @@ public:
 
     void resetPointerSeed();
 
+    // Optional editing region in grid cells (x/width = columns, y/height = rows). Pointer lookups that land
+    // outside it are rejected, so on a stitched multi-winding segment only the chosen winding answers
+    // CT clicks, drags and the A/D brush. The brush neighbourhood itself is not clipped: cells across the
+    // winding seam are physically adjacent on the same sheet.
+    void setEditRegion(std::optional<cv::Rect> region);
+    [[nodiscard]] const std::optional<cv::Rect>& editRegion() const { return _editRegion; }
+    [[nodiscard]] bool inEditRegion(int row, int col) const;
+    bool takeRegionRejection(int* row, int* col) const;
+
 private:
     static bool isInvalidPoint(const cv::Vec3f& value);
     void rebuildPreviewFromOriginal();
@@ -188,4 +197,9 @@ private:
 
     mutable bool _pointerSeedValid{false};
     mutable cv::Vec3f _pointerSeed{0.0f, 0.0f, 0.0f};
+
+    std::optional<cv::Rect> _editRegion;
+    mutable bool _regionRejected{false};
+    mutable int _regionRejectedRow{-1};
+    mutable int _regionRejectedCol{-1};
 };

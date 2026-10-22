@@ -7173,6 +7173,21 @@ void CWindow::CreateWidgets(void)
         if (const auto* focus = _state->poi("focus")) recenterPlaneViewersOn(focus->p);
     });
     manualRow->addWidget(focusPatch);
+    auto* regionLabel = new QLabel(tr("Winding"),ui.tabSegment);
+    regionLabel->setObjectName(QStringLiteral("directEditRegionLabel"));
+    auto* regionCombo = new QComboBox(ui.tabSegment);
+    regionCombo->setObjectName(QStringLiteral("directEditRegion"));
+    regionCombo->setToolTip(tr("Stitched segments: choose which winding the CT clicks, drags and the A/D brush act on. "
+                               "The other winding is shaded in the flattened view, drawn dimmer in the slices and ignores the pointer."));
+    regionCombo->setFocusPolicy(Qt::ClickFocus);
+    regionCombo->setMinimumContentsLength(18);
+    regionLabel->hide();
+    regionCombo->hide();
+    connect(regionCombo,QOverload<int>::of(&QComboBox::currentIndexChanged),this,[this](int index) {
+        if (_segmentationModule) _segmentationModule->setEditRegionIndex(index-1);
+    });
+    manualRow->addWidget(regionLabel);
+    manualRow->addWidget(regionCombo);
     const auto brushControl = [this,manualRow](const QString& label,const QString& name,
                                               double low,double high,double step,
                                               void (SegmentationModule::*setter)(float)) {
@@ -7577,6 +7592,36 @@ void CWindow::CreateWidgets(void)
         }
     };
     connect(_segmentationModule.get(),&SegmentationModule::pushPullSettingsChanged,this,syncBrushControls);
+    const auto syncEditRegions = [this]() {
+        auto* combo = findChild<QComboBox*>(QStringLiteral("directEditRegion"));
+        auto* label = findChild<QLabel*>(QStringLiteral("directEditRegionLabel"));
+        if (!combo || !label || !_segmentationModule) return;
+        const auto& regions = _segmentationModule->editRegions();
+        const QSignalBlocker blocker(combo);
+        combo->clear();
+        if (regions.empty()) {
+            combo->hide();
+            label->hide();
+            return;
+        }
+        combo->addItem(tr("All windings"));
+        for (const auto& region : regions) combo->addItem(region.label);
+        combo->setCurrentIndex(_segmentationModule->editRegionIndex()+1);
+        combo->show();
+        label->show();
+    };
+    connect(_segmentationModule.get(),&SegmentationModule::editRegionsChanged,this,syncEditRegions);
+    connect(_segmentationModule.get(),&SegmentationModule::editRegionChanged,this,[this,syncEditRegions](int) {
+        syncEditRegions();
+        if (!_viewerManager) return;
+        _viewerManager->forEachBaseViewer([](VolumeViewerBase* viewer) {
+            if (auto* chunked = dynamic_cast<CChunkedVolumeViewer*>(viewer)) {
+                chunked->invalidateIntersect();
+                chunked->renderIntersections("edit region");
+            }
+        });
+    });
+    syncEditRegions();
     syncBrushControls();
 
     if (_segmentationModule && _planeSlicingOverlay) {
@@ -10479,7 +10524,9 @@ void CWindow::updateSurfaceOverlayDropdown()
             item->setData(folderName, SURFACE_OVERLAY_FOLDER_ROLE);
 
             QPixmap swatch(16, 16);
-            swatch.fill(getOverlayColor(colorIdx));
+            const QColor customColor(QString::fromStdString(
+                vc::json::string_or(quadSurf->meta, "vc3d_segment_color", std::string{})));
+            swatch.fill(customColor.isValid() ? customColor : getOverlayColor(colorIdx));
             item->setIcon(QIcon(swatch));
 
             folderItem->appendRow(item);
@@ -10549,6 +10596,13 @@ void CWindow::applySurfaceOverlaySelection()
             std::string name = item->data(SURFACE_OVERLAY_NAME_ROLE).toString().toStdString();
             size_t colorIdx = _surfaceOverlayColorAssignments[name];
             selectedSurfaces[name] = getOverlayColorBGR(colorIdx);
+            if (auto surf = std::dynamic_pointer_cast<QuadSurface>(_state->surface(name))) {
+                const QColor color(QString::fromStdString(
+                    vc::json::string_or(surf->meta, "vc3d_segment_color", std::string{})));
+                if (color.isValid()) {
+                    selectedSurfaces[name] = cv::Vec3b(color.blue(), color.green(), color.red());
+                }
+            }
         }
     }
 

@@ -368,13 +368,26 @@ void InkDetectionOverlayController::collectPrimitives(
         return;
     }
 
+    const auto gridSize=surface->rawPoints().size();
+    QRectF imageGrid(0,0,gridSize.width,gridSize.height);
+    if (surface->meta.contains("manual_image_grid") && surface->meta["manual_image_grid"].is_array() &&
+        surface->meta["manual_image_grid"].size()==4) {
+        const auto& rect=surface->meta["manual_image_grid"];
+        imageGrid=QRectF(rect[0].get_double(),rect[1].get_double(),rect[2].get_double(),rect[3].get_double());
+        if(imageGrid.width()<=0 || imageGrid.height()<=0) return;
+    }
+    if (const QImage warped = viewer->surfaceImageInScene(_selectedImage.image,imageGrid); !warped.isNull()) {
+        builder.addImage(warped,QPointF(0,0),1.0,static_cast<qreal>(_opacity)/100.0,kInkDetectionZ);
+        return;
+    }
+
     const cv::Vec2f surfScale = surface->scale();
     if (std::abs(surfScale[0]) < 1.0e-6f || std::abs(surfScale[1]) < 1.0e-6f) {
         return;
     }
 
     const cv::Vec3f center = surface->center();
-    auto gridToScene = [&](int row, int col) -> QPointF {
+    auto gridToScene = [&](float row, float col) -> QPointF {
         const float surfX = static_cast<float>(col) / surfScale[0] - center[0];
         const float surfY = static_cast<float>(row) / surfScale[1] - center[1];
         return viewer->surfaceCoordsToScene(surfX, surfY);
@@ -386,9 +399,9 @@ void InkDetectionOverlayController::collectPrimitives(
         return;
     }
 
-    const QPointF grid00 = gridToScene(0, 0);
-    const QPointF grid01 = gridToScene(0, 1);
-    const QPointF grid10 = gridToScene(1, 0);
+    const QPointF grid00 = gridToScene(imageGrid.y(), imageGrid.x());
+    const QPointF grid01 = gridToScene(imageGrid.y(), imageGrid.x()+1);
+    const QPointF grid10 = gridToScene(imageGrid.y()+1, imageGrid.x());
     const QPointF colStep = grid01 - grid00;
     const QPointF rowStep = grid10 - grid00;
     const qreal gridScaleX = std::hypot(colStep.x(), colStep.y());
@@ -398,9 +411,9 @@ void InkDetectionOverlayController::collectPrimitives(
     }
 
     const qreal imageScaleX = gridScaleX *
-        (static_cast<qreal>(points->cols) / static_cast<qreal>(_selectedImage.image.width()));
+        (imageGrid.width() / static_cast<qreal>(_selectedImage.image.width()));
     const qreal imageScaleY = gridScaleY *
-        (static_cast<qreal>(points->rows) / static_cast<qreal>(_selectedImage.image.height()));
+        (imageGrid.height() / static_cast<qreal>(_selectedImage.image.height()));
 
     builder.addImage(_selectedImage.image,
                      grid00,

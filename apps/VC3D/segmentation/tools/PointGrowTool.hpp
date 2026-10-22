@@ -32,6 +32,9 @@ public:
     const cv::Mat_<cv::Vec3f>& points() const { return _points; }
     const cv::Mat_<cv::Vec3f>& original() const { return _original; }
     cv::Point offset() const { return _offset; }
+    // Clicks whose nearest chart vertex lies outside this grid region are refused (stitched windings).
+    void setEditRegion(std::optional<cv::Rect> region) { _editRegion = region; }
+    std::optional<cv::Rect> editRegion() const { return _editRegion; }
     std::vector<GridKey> changedVertices() const;
     std::vector<cv::Vec3f> anchors() const;
 
@@ -43,6 +46,7 @@ private:
     void pad(int amount);
     cv::Mat_<cv::Vec3f> _points, _original;
     cv::Point _offset;
+    std::optional<cv::Rect> _editRegion;
     std::vector<Anchor> _anchors;
     std::vector<Undo> _undo, _redo;
 };

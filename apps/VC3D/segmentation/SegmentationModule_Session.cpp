@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <optional>
 #include "SegmentationModule.hpp"
 
 #include "../CState.hpp"
@@ -31,6 +33,7 @@ bool SegmentationModule::beginEditingSession(std::shared_ptr<QuadSurface> surfac
         return false;
     }
     _autosaveState.beginSession();
+    loadEditRegionsFromSurface();
 
     if (_state) {
         _state->setSurface("segmentation", _editManager->previewSurface(), false, true);
@@ -95,6 +98,11 @@ void SegmentationModule::endEditingSession()
     clearUndoStack();
     cancelDrag();
     clearLineDragStroke();
+    if (!_editRegions.empty() || _editRegionIndex != -1) {
+        _editRegions.clear();
+        _editRegionIndex = -1;
+        emit editRegionsChanged();
+    }
     if (_surfaceMaskTool) {
         _surfaceMaskTool->setActive(false);
     }
@@ -552,4 +560,109 @@ void SegmentationModule::saveCorrectionPoints(const std::filesystem::path& segme
     if (_pointCollection && !segmentPath.empty()) {
         _pointCollection->saveToSegmentPath(segmentPath);
     }
+}
+
+void SegmentationModule::loadEditRegionsFromSurface()
+{
+    _editRegions.clear();
+    _editRegionIndex = -1;
+    if (_editManager && _editManager->hasSession()) {
+        const EditRegionInfo info = editRegionsFromMeta(_editManager->baseSurface().get());
+        _editRegions = info.regions;
+        if (!_editRegions.empty()) {
+            _editRegionIndex = std::clamp(info.selected, -1, static_cast<int>(_editRegions.size()) - 1);
+        }
+    }
+    applyEditRegion();
+    emit editRegionsChanged();
+}
+
+void SegmentationModule::applyEditRegion()
+{
+    std::optional<cv::Rect> region;
+    if (_editRegionIndex >= 0 && _editRegionIndex < static_cast<int>(_editRegions.size())) {
+        region = _editRegions[static_cast<size_t>(_editRegionIndex)].cells;
+    }
+    if (_editManager) {
+        _editManager->setEditRegion(region);
+    }
+    _pointGrowTool.setEditRegion(region);
+}
+
+void SegmentationModule::setEditRegionIndex(int index)
+{
+    if (_editRegions.empty()) {
+        index = -1;
+    }
+    index = std::clamp(index, -1, static_cast<int>(_editRegions.size()) - 1);
+    if (index == _editRegionIndex) {
+        return;
+    }
+    _editRegionIndex = index;
+    applyEditRegion();
+    if (_editManager && _editManager->hasSession()) {
+        if (auto surface = _editManager->baseSurface()) {
+            if (surface->meta.is_null() || !surface->meta.is_object()) {
+                surface->meta = utils::Json::object();
+            }
+            surface->meta["editing_region_selected"] = index;
+        }
+    }
+    _hover.clear();
+    emit editRegionChanged(index);
+    refreshOverlay();
+    if (index >= 0) {
+        emit statusMessageRequested(tr("Editing %1 only. The other winding is dimmed and ignores CT clicks, drags and A/D.")
+                                        .arg(_editRegions[static_cast<size_t>(index)].label),
+                                    kStatusMedium);
+    } else {
+        emit statusMessageRequested(tr("Editing all windings."), kStatusMedium);
+    }
+}
+
+void SegmentationModule::shiftEditRegions(int colDelta, int rowDelta)
+{
+    if (_editRegions.empty() || (colDelta == 0 && rowDelta == 0)) {
+        return;
+    }
+    for (auto& region : _editRegions) {
+        region.cells.x += colDelta;
+        region.cells.y += rowDelta;
+    }
+    if (_editManager && _editManager->hasSession()) {
+        if (auto surface = _editManager->baseSurface()) {
+            if (surface->meta.is_null() || !surface->meta.is_object()) {
+                surface->meta = utils::Json::object();
+            }
+            surface->meta["editing_regions"] = editRegionsToJson(_editRegions);
+        }
+    }
+    applyEditRegion();
+    emit editRegionChanged(_editRegionIndex);
+}
+
+int SegmentationModule::editRegionIndexForCell(int row, int col) const
+{
+    for (size_t i = 0; i < _editRegions.size(); ++i) {
+        if (_editRegions[i].cells.contains(cv::Point(col, row))) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+void SegmentationModule::noteEditRegionRejection(int row, int col)
+{
+    if (_editRegionIndex < 0 || _editRegionIndex >= static_cast<int>(_editRegions.size())) {
+        return;
+    }
+    if (_editRegionMessageTimer.isValid() && _editRegionMessageTimer.elapsed() < 1500) {
+        return;
+    }
+    _editRegionMessageTimer.restart();
+    const int other = editRegionIndexForCell(row, col);
+    const QString where = other >= 0 ? _editRegions[static_cast<size_t>(other)].label : tr("outside every winding region");
+    emit statusMessageRequested(tr("Pointer is on %1; editing %2. Pick it in the Winding box to edit there.")
+                                    .arg(where, _editRegions[static_cast<size_t>(_editRegionIndex)].label),
+                                kStatusShort);
 }

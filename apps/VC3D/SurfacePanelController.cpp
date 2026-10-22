@@ -1602,7 +1602,18 @@ void SurfacePanelController::applyTransformWarningStyle(SurfaceTreeWidgetItem* i
     }
 
     const bool warning = !_transformWarningText.isEmpty();
-    const QBrush foreground = warning ? QBrush(QColor(QStringLiteral("#c62828"))) : QBrush();
+    QBrush foreground;
+    const auto id = item->data(SURFACE_ID_COLUMN, Qt::UserRole).toString().toStdString();
+    if (auto surf = getSurfaceById(id)) {
+        const QColor color(QString::fromStdString(
+            vc::json::string_or(surf->meta, "vc3d_segment_color", std::string{})));
+        if (color.isValid()) {
+            foreground = QBrush(color);
+        }
+    }
+    if (warning) {
+        foreground = QBrush(QColor(QStringLiteral("#c62828")));
+    }
     for (int column = SURFACE_ID_COLUMN; column <= TIMESTAMP_COLUMN; ++column) {
         item->setForeground(column, foreground);
         if (warning) {

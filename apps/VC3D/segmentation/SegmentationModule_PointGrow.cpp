@@ -114,6 +114,7 @@ bool SegmentationModule::publishPointGrowPreview(bool autosave)
         const auto delta = offset - _pointGrowPublishedOffset;
         if (delta != cv::Point()) {
             applyCorrectionAnchorOffset(delta.x, delta.y);
+            shiftEditRegions(delta.x, delta.y);
             saveCorrectionPoints(surface->path);
             _pointGrowPublishedOffset = offset;
         }
@@ -170,6 +171,7 @@ bool SegmentationModule::finishPointGrow(bool apply)
         _editManager->refreshFromBaseSurface();
         if (_pointGrowPublishedOffset != cv::Point()) {
             applyCorrectionAnchorOffset(-_pointGrowPublishedOffset.x,-_pointGrowPublishedOffset.y);
+            shiftEditRegions(-_pointGrowPublishedOffset.x,-_pointGrowPublishedOffset.y);
             saveCorrectionPoints(surface->path);
         }
         emit statusMessageRequested(tr("Editing finished; starting geometry restored."),kStatusShort);

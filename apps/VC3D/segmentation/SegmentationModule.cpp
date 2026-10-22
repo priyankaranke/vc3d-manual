@@ -2210,6 +2210,7 @@ bool SegmentationModule::beginManualAdd()
         _pointGrowSnapshot = segmentation::snapshotSurface(*_editManager->baseSurface());
         _pointGrowPublishedOffset = {};
         if (!_pointGrowTool.begin(_editManager->previewPoints())) return false;
+        applyEditRegion();
         _editManager->setAllowNewVertexEdits(true);
         useFalloff(FalloffTool::PushPull);
     }
@@ -2511,6 +2512,10 @@ bool SegmentationModule::handleManualAddMousePress(VolumeViewerBase* viewer,
             _manualAddTool->updateHover(grid->first, grid->second);
         }
         _manualAddHoverThrottle.restart();
+        if (grid && _editManager && !_editManager->inEditRegion(grid->first, grid->second)) {
+            noteEditRegionRejection(grid->first, grid->second);
+            return true;
+        }
 
         std::string status;
         if (!_manualAddTool->commitHover(&status)) {
@@ -2934,7 +2939,10 @@ void SegmentationModule::updateHover(VolumeViewerBase* viewer,
                 clearHover();
             } else {
                 const auto grid = segmentationSceneToGrid(targetViewer, scenePos, points.rows, points.cols);
-                if (grid) {
+                if (grid && !_editManager->inEditRegion(grid->first, grid->second)) {
+                    clearHover();
+                    noteEditRegionRejection(grid->first, grid->second);
+                } else if (grid) {
                     if (auto world = _editManager->vertexWorldPosition(grid->first, grid->second)) {
                         setHover(grid->first, grid->second, *world);
                     } else {
@@ -2962,6 +2970,11 @@ void SegmentationModule::updateHover(VolumeViewerBase* viewer,
                 }
             } else {
                 clearHover();
+                int rejectedRow = -1;
+                int rejectedCol = -1;
+                if (_editManager->takeRegionRejection(&rejectedRow, &rejectedCol)) {
+                    noteEditRegionRejection(rejectedRow, rejectedCol);
+                }
             }
         }
     }

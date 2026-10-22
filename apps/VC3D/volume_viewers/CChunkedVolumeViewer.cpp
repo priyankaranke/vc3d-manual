@@ -29,6 +29,10 @@
 #include <QGraphicsEllipseItem>
 #include <QGraphicsItem>
 #include <QGraphicsPathItem>
+#include <QGraphicsLineItem>
+#include <QGraphicsRectItem>
+#include <QFont>
+#include "segmentation/EditRegions.hpp"
 #include <QGraphicsScene>
 #include <QGraphicsSimpleTextItem>
 #include <QMessageBox>
@@ -92,8 +96,24 @@ constexpr float kApprovalPlaneIntersectionScale = 1.5f;
 constexpr float kLastGrowthPlaneIntersectionScale = 1.5f;
 constexpr float kFocusProjectionThreshold = 4.0f;
 
+std::optional<QColor> segmentCustomColor(const QuadSurface* surface)
+{
+    if (!surface || surface->meta.is_null() || !surface->meta.contains("vc3d_segment_color")) {
+        return std::nullopt;
+    }
+    const auto& value = surface->meta["vc3d_segment_color"];
+    if (!value.is_string()) {
+        return std::nullopt;
+    }
+    const QColor color(QString::fromStdString(value.get_string()));
+    return color.isValid() ? std::optional<QColor>(color) : std::nullopt;
+}
+
 std::optional<QColor> segmentFolderColorOverride(const QuadSurface* surface)
 {
+    if (auto color = segmentCustomColor(surface)) {
+        return color;
+    }
     if (!surface || surface->meta.is_null() || !surface->meta.contains("vc3d_segment_folder_color")) {
         return std::nullopt;
     }
@@ -1007,6 +1027,7 @@ void CChunkedVolumeViewer::onSurfaceChanged(const std::string& name,
         _scene->clear();
         _overlayGroups.clear();
         _cursorCrosshair = nullptr;
+        _editRegionItems.clear();
         _lineAnnotationPlacementMarker = nullptr;
         _focusMarker = nullptr;
         return;
@@ -4421,6 +4442,7 @@ void CChunkedVolumeViewer::renderIntersections(const char* reason, std::source_l
     auto activeSeg = std::dynamic_pointer_cast<QuadSurface>(_state->surface("segmentation"));
     if (!plane) {
         renderFlattenedIntersections(surf, reason, caller);
+        renderEditRegionGuides(surf);
         profile.setDetails("action=delegated_flattened");
         return;
     }
@@ -4859,7 +4881,7 @@ void CChunkedVolumeViewer::renderIntersections(const char* reason, std::source_l
         float opacity = _intersectionOpacity;
         float penWidth = _intersectionThickness;
         if (target == activeSeg) {
-            baseColor = activeSegmentationColorForView(_surfName);
+            baseColor = segmentCustomColor(target.get()).value_or(activeSegmentationColorForView(_surfName));
             zValue = kActiveIntersectionZ;
             opacity *= kActiveIntersectionOpacityScale;
             penWidth = activeSegmentationIntersectionWidth(penWidth);
@@ -4892,13 +4914,34 @@ void CChunkedVolumeViewer::renderIntersections(const char* reason, std::source_l
             int(std::lround(std::max(0.0f, penWidth) * 1000.0f)),
         };
         groupedColors[style] = baseColor;
+        // Stitched multi-winding segmentation: draw the winding that is not being edited dimmer and
+        // thinner, so the two turns of the same segment can be told apart in the slice views.
+        const EditRegionInfo regions = (target == activeSeg) ? editRegionsFromMeta(activeSeg.get()) : EditRegionInfo{};
+        const bool splitRegions = regions.selected >= 0 && !regions.regions.empty();
+        QColor dimColor = baseColor;
+        dimColor.setAlphaF(std::clamp(opacity * 0.4f, 0.0f, 1.0f));
+        const IntersectionStyle dimStyle{
+            dimColor.rgba(),
+            zValue - 1,
+            int(std::lround(std::max(0.0f, penWidth * 0.6f) * 1000.0f)),
+        };
+        if (splitRegions) {
+            groupedColors[dimStyle] = dimColor;
+        }
+        const cv::Rect selectedCells = splitRegions ? regions.regions[static_cast<size_t>(regions.selected)].cells : cv::Rect();
         for (const auto& seg : segments) {
             QPointF a = planeToScene(seg.world[0]);
             QPointF b = planeToScene(seg.world[1]);
             if (!isFinitePoint(a) || !isFinitePoint(b))
                 continue;
-            groupedPaths[style].moveTo(a);
-            groupedPaths[style].lineTo(b);
+            bool dim = false;
+            if (splitRegions) {
+                const cv::Vec2f grid = activeSeg->ptrToGrid((seg.surfaceParams[0] + seg.surfaceParams[1]) * 0.5f);
+                dim = !selectedCells.contains(cv::Point(int(std::lround(grid[0])), int(std::lround(grid[1]))));
+            }
+            QPainterPath& path = groupedPaths[dim ? dimStyle : style];
+            path.moveTo(a);
+            path.lineTo(b);
             if (target == activeSeg) {
                 addApprovalMaskIntersection(seg, opacity, penWidth);
                 addLastGrowthIntersection(seg, opacity, penWidth);
@@ -5089,4 +5132,83 @@ void CChunkedVolumeViewer::updateStatusLabel()
 
     _statsBar->setItems(items);
     emit sharedCacheStatsChanged(sharedCacheItems);
+}
+
+// Flattened view of a stitched multi-winding segment: shade the windings that are not being edited,
+// mark the seams and label every winding.
+void CChunkedVolumeViewer::renderEditRegionGuides(const std::shared_ptr<Surface>& surf)
+{
+    for (auto* item : _editRegionItems) {
+        if (item->scene()) {
+            item->scene()->removeItem(item);
+        }
+        delete item;
+    }
+    _editRegionItems.clear();
+    if (!_scene || _surfName != "segmentation") {
+        return;
+    }
+    auto quad = std::dynamic_pointer_cast<QuadSurface>(surf);
+    if (!quad) {
+        return;
+    }
+    const EditRegionInfo info = editRegionsFromMeta(quad.get());
+    if (info.regions.empty()) {
+        return;
+    }
+    const cv::Mat_<cv::Vec3f>* points = quad->rawPointsPtr();
+    if (!points || points->empty()) {
+        return;
+    }
+    const cv::Vec2f scale = quad->scale();
+    const cv::Vec3f center = quad->center();
+    auto gridToScene = [&](float row, float col) {
+        return surfaceToScene(col / scale[0] - center[0], row / scale[1] - center[1]);
+    };
+    const float rows = static_cast<float>(points->rows);
+    for (size_t i = 0; i < info.regions.size(); ++i) {
+        const cv::Rect r = info.regions[i].cells & cv::Rect(0, 0, points->cols, points->rows);
+        if (r.width <= 0 || r.height <= 0) {
+            continue;
+        }
+        const bool selected = info.selected < 0 || static_cast<int>(i) == info.selected;
+        const QRectF rect = QRectF(gridToScene(static_cast<float>(r.y), static_cast<float>(r.x)),
+                                   gridToScene(static_cast<float>(r.y + r.height), static_cast<float>(r.x + r.width))).normalized();
+        if (!selected) {
+            auto* shade = new QGraphicsRectItem(rect);
+            shade->setPen(Qt::NoPen);
+            shade->setBrush(QColor(0, 0, 0, 115));
+            shade->setZValue(kIntersectionZ - 10);
+            shade->setAcceptedMouseButtons(Qt::NoButton);
+            _scene->addItem(shade);
+            _editRegionItems.push_back(shade);
+        }
+        if (i > 0) {
+            auto* line = new QGraphicsLineItem(QLineF(gridToScene(0.0f, static_cast<float>(r.x)),
+                                                      gridToScene(rows, static_cast<float>(r.x))));
+            QPen pen(QColor(80, 220, 255, 230), 2.0, Qt::DashLine);
+            pen.setCosmetic(true);
+            line->setPen(pen);
+            line->setZValue(kActiveIntersectionZ + 1);
+            line->setAcceptedMouseButtons(Qt::NoButton);
+            _scene->addItem(line);
+            _editRegionItems.push_back(line);
+        }
+        QString label = info.regions[i].label;
+        if (info.selected >= 0) {
+            label += selected ? QStringLiteral("  ·  editing") : QStringLiteral("  ·  locked");
+        }
+        auto* text = new QGraphicsSimpleTextItem(label);
+        text->setFlag(QGraphicsItem::ItemIgnoresTransformations, true);
+        text->setBrush(selected ? QColor(255, 235, 90) : QColor(205, 205, 205));
+        QFont font = text->font();
+        font.setPointSizeF(13.0);
+        font.setBold(selected);
+        text->setFont(font);
+        text->setPos(rect.left() + 8.0, rect.top() + 8.0);
+        text->setZValue(kActiveIntersectionZ + 2);
+        text->setAcceptedMouseButtons(Qt::NoButton);
+        _scene->addItem(text);
+        _editRegionItems.push_back(text);
+    }
 }

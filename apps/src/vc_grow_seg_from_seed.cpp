@@ -324,6 +324,20 @@ int main(int argc, char *argv[])
         set_space_tracing_use_cuda(true);
     }
 
+    // Older VC3D seeding panels pass Volume::path(), which is empty for
+    // remote volumes. Allow their seed configuration to supply the URL.
+    // A non-empty command-line volume always takes precedence.
+    if (vol_path.empty()) {
+        const auto configured_volume = params.value("volume_url", std::string{});
+        if (configured_volume.empty() || !is_remote_volume_path(configured_volume)) {
+            std::cerr << "ERROR: No volume path was supplied. For remote seeding, "
+                         "set volume_url to the remote Zarr URL in the seed configuration."
+                      << std::endl;
+            return EXIT_FAILURE;
+        }
+        vol_path = configured_volume;
+    }
+
     const std::string volume_arg = vol_path.string();
     const bool remote_volume = is_remote_volume_path(volume_arg);
     auto volume = remote_volume

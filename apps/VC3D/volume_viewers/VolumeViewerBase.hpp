@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QColor>
+#include <QImage>
 #include <QMetaObject>
 #include <QPointF>
 #include <QRectF>
@@ -56,6 +57,8 @@ public:
     virtual cv::Vec3f sceneToVolume(const QPointF& scenePoint) const = 0;
     virtual cv::Vec2f sceneToSurfaceCoords(const QPointF& scenePos) const = 0;
     virtual QPointF surfaceCoordsToScene(float surfX, float surfY) const = 0;
+    // Empty means the ordinary affine image placement is sufficient.
+    virtual QImage surfaceImageInScene(const QImage&, const QRectF&) const { return {}; }
     virtual QPointF lastScenePosition() const = 0;
     virtual void setLinkedCursorVolumePoint(const std::optional<cv::Vec3f>& point) = 0;
 

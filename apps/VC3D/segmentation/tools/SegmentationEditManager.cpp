@@ -53,6 +53,8 @@ const cv::Mat_<cv::Vec3f>* SegmentationEditManager::previewPointsPtr() const
 
 bool SegmentationEditManager::beginSession(std::shared_ptr<QuadSurface> baseSurface)
 {
+    _editRegion.reset();
+    _regionRejected = false;
     if (!baseSurface) {
         return false;
     }
@@ -613,6 +615,13 @@ std::optional<std::pair<int, int>> SegmentationEditManager::worldToGridIndex(con
             qCWarning(lcSegEditManager) << "Cannot resolve segmentation grid location: surface patch index hit invalid vertex"
                                         << "row" << row << "col" << col;
         }
+        return std::nullopt;
+    }
+
+    if (!inEditRegion(row, col)) {
+        _regionRejected = true;
+        _regionRejectedRow = row;
+        _regionRejectedCol = col;
         return std::nullopt;
     }
 
@@ -1306,4 +1315,33 @@ float SegmentationEditManager::stepNormalization() const
     const float sy = std::abs(_gridScale[1]);
     const float avg = 0.5f * (sx + sy);
     return (avg > 1e-4f) ? avg : 1.0f;
+}
+
+void SegmentationEditManager::setEditRegion(std::optional<cv::Rect> region)
+{
+    _editRegion = region;
+    _regionRejected = false;
+}
+
+bool SegmentationEditManager::inEditRegion(int row, int col) const
+{
+    if (!_editRegion) {
+        return true;
+    }
+    return _editRegion->contains(cv::Point(col, row));
+}
+
+bool SegmentationEditManager::takeRegionRejection(int* row, int* col) const
+{
+    if (!_regionRejected) {
+        return false;
+    }
+    if (row) {
+        *row = _regionRejectedRow;
+    }
+    if (col) {
+        *col = _regionRejectedCol;
+    }
+    _regionRejected = false;
+    return true;
 }

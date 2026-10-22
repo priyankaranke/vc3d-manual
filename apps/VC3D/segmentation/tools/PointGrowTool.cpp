@@ -43,6 +43,7 @@ void PointGrowTool::pad(int amount) {
     grow(_points); grow(_original);
     const cv::Point delta(amount, amount);
     _offset += delta;
+    if (_editRegion) { _editRegion->x += amount; _editRegion->y += amount; }
     for (auto& a : _anchors) a.grid += delta;
     for (auto* history : {&_undo, &_redo})
         for (auto& u : *history) {
@@ -116,6 +117,10 @@ bool PointGrowTool::addPoint(const cv::Vec3f& world, int width, std::string& sta
         if (d2 < best) { best = d2; nearest = {c, r}; }
     }
     if (nearest.x < 0) { status = "Import a surface with existing geometry first."; return false; }
+    if (_editRegion && !_editRegion->contains(nearest)) {
+        status = "That click is nearest to the other winding; choose it in the Winding box to edit there.";
+        return false;
+    }
 
     // Estimate the inherited chart's two tangents using a small local fit.
     std::vector<cv::Vec3d> rows, values;

@@ -367,6 +367,7 @@ private:
     std::optional<std::pair<uint64_t, uint64_t>> pointAtScenePosition(const QPointF& scenePos);
     void clearIntersectionItems();
     void updateIntersectionPreviewTransform();
+    void renderEditRegionGuides(const std::shared_ptr<Surface>& surf);
     void renderFlattenedIntersections(const std::shared_ptr<Surface>& surf,
                                       const char* reason,
                                       std::source_location caller);
@@ -485,6 +486,7 @@ private:
     ResolvedIntersectTargets _resolvedIntersectTargets;
 
     std::vector<QGraphicsItem*> _intersectionItems;
+    std::vector<QGraphicsItem*> _editRegionItems;
     float _intersectionItemsCamSurfX = 0.0f;
     float _intersectionItemsCamSurfY = 0.0f;
     float _intersectionItemsCamScale = 1.0f;
