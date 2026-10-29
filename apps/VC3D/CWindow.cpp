@@ -7597,6 +7597,7 @@ void CWindow::CreateWidgets(void)
         auto* label = findChild<QLabel*>(QStringLiteral("directEditRegionLabel"));
         if (!combo || !label || !_segmentationModule) return;
         const auto& regions = _segmentationModule->editRegions();
+        qInfo() << "Winding selector: regions" << regions.size() << "index" << _segmentationModule->editRegionIndex();
         const QSignalBlocker blocker(combo);
         combo->clear();
         if (regions.empty()) {

@@ -35,6 +35,7 @@
 #include "vc/core/util/SurfacePatchIndex.hpp"
 
 class CState;
+class SurfaceDisplayMap;
 class QEvent;
 class QGraphicsEllipseItem;
 class QGraphicsItem;
@@ -187,6 +188,7 @@ public:
     void setSurfaceOverlays(const std::map<std::string, cv::Vec3b>& overlays) override { if (_closing) return; _surfaceOverlays = overlays; emit overlaysUpdated(); }
     void setSurfaceOverlapThreshold(float threshold) override { if (_closing) return; _surfaceOverlapThreshold = std::max(0.0f, threshold); emit overlaysUpdated(); }
 
+    QImage surfaceImageInScene(const QImage& image, const QRectF& imageGrid) const override;
     QPointF volumeToScene(const cv::Vec3f& volPoint) override;
     cv::Vec3f sceneToVolume(const QPointF& scenePoint) const override;
     [[nodiscard]] std::optional<SceneVolumeSample> sampleSceneVolume(const QPointF& scenePoint) const;
@@ -312,6 +314,7 @@ private:
         float windowHigh = 255.0f;
         std::string baseColormapId;
         std::shared_ptr<Surface> surf;
+        std::shared_ptr<const SurfaceDisplayMap> displayMap;
         std::string surfaceName;
         std::shared_ptr<vc::render::ChunkCache> chunkArray;
         std::shared_ptr<Volume> overlayVolume;
@@ -422,6 +425,16 @@ private:
     cv::Mat_<uint8_t> _coverage;
     std::shared_ptr<GeneratedSurfaceCache> _genSurfaceCache;
     bool _genCacheDirty = true;
+    std::shared_ptr<const SurfaceDisplayMap> _displayMap;
+    struct WarpedImageCache {
+        const SurfaceDisplayMap* map = nullptr;
+        qint64 imageKey = 0;
+        cv::Vec2f center{0,0};
+        float scale = 0;
+        QRectF imageGrid;
+        QImage image;
+    };
+    mutable WarpedImageCache _warpedImageCache;
 
     float _surfacePtrX = 0.0f;
     float _surfacePtrY = 0.0f;

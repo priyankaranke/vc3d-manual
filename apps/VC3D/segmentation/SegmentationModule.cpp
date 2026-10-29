@@ -1,4 +1,5 @@
 #include "SegmentationModule.hpp"
+#include "volume_viewers/SurfaceDisplayMap.hpp"
 
 #include "../OpenDataSegmentCache.hpp"
 #include "../VCSettings.hpp"
@@ -2209,7 +2210,8 @@ bool SegmentationModule::beginManualAdd()
     if (_widget->manualAddConfig().directCT) {
         _pointGrowSnapshot = segmentation::snapshotSurface(*_editManager->baseSurface());
         _pointGrowPublishedOffset = {};
-        if (!_pointGrowTool.begin(_editManager->previewPoints())) return false;
+        if (!_pointGrowTool.begin(_editManager->previewPoints(), _pointGrowSnapshot->scale(),
+                                 surface_display::readOffsets(*_pointGrowSnapshot))) return false;
         applyEditRegion();
         _editManager->setAllowNewVertexEdits(true);
         useFalloff(FalloffTool::PushPull);

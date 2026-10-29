@@ -1,21 +1,13 @@
 #include "SegmentationModule.hpp"
 #include "SegmentationWidget.hpp"
 #include "CState.hpp"
+#include "volume_viewers/SurfaceDisplayMap.hpp"
 #include "ViewerManager.hpp"
 #include "tools/SegmentationPushPullTool.hpp"
+#include "tools/PointGrowChannels.hpp"
 #include "vc/core/util/PlaneSurface.hpp"
 #include <QElapsedTimer>
 #include <cmath>
-
-namespace {
-// Ancillary images can be stored on either a cell raster (N*k) or a vertex
-// raster ((N-1)*k+1). Translate those rasters exactly; never resize their pixels.
-std::optional<std::pair<int,bool>> channelScale(int pixels, int nodes) {
-    if (nodes > 0 && pixels % nodes == 0) return {{pixels/nodes,false}};
-    if (nodes > 1 && (pixels-1) % (nodes-1) == 0) return {{(pixels-1)/(nodes-1),true}};
-    return std::nullopt;
-}
-}
 
 void SegmentationModule::deletePointGrowVertex(VolumeViewerBase* viewer, const QPointF& scenePos)
 {
@@ -84,23 +76,29 @@ bool SegmentationModule::publishPointGrowPreview(bool autosave)
         for (const auto& name : _pointGrowSnapshot->channelNames()) {
             auto source = _pointGrowSnapshot->channel(name,SURF_CHANNEL_NORESIZE);
             if (source.empty()) continue;
-            const auto sx = channelScale(source.cols,oldSize.width);
-            const auto sy = channelScale(source.rows,oldSize.height);
-            if (!sx || !sy || sx->first < 1 || sy->first < 1) {
-                emit statusMessageRequested(tr("Channel %1 has an unknown grid mapping. Import a clean XYZ copy before growing.")
-                    .arg(QString::fromStdString(name)),kStatusMedium);
-                return false;
-            }
-            const int cols = (points.cols - (sx->second ? 1 : 0))*sx->first + (sx->second ? 1 : 0);
-            const int rows = (points.rows - (sy->second ? 1 : 0))*sy->first + (sy->second ? 1 : 0);
-            cv::Mat padded = cv::Mat::zeros(rows,cols,source.type());
-            source.copyTo(padded(cv::Rect(offset.x*sx->first,offset.y*sy->first,source.cols,source.rows)));
-            channels.emplace_back(name,std::move(padded));
+            channels.emplace_back(name,segmentation::padPointGrowChannel(source,oldSize,points.size(),offset));
         }
         if (!_editManager->setResizedPreviewPoints(points,_pointGrowTool.original(),changed,true)) return false;
         for (const auto& [name,channel] : channels) surface->setChannel(name,channel);
     } else if (!_editManager->setPreviewPointsOnly(points,changed,true)) return false;
 
+    surface_display::writeOffsets(*surface,_pointGrowTool.displayOffsets());
+    // External ROI/ink PNGs still cover the original grid. Padding translates
+    // that footprint; it must never stretch the old image over the new nodes.
+    const auto originalSize=_pointGrowSnapshot->rawPoints().size();
+    double imageX=0,imageY=0,imageW=originalSize.width,imageH=originalSize.height;
+    if (_pointGrowSnapshot->meta.contains("manual_image_grid")) {
+        const auto& rect=_pointGrowSnapshot->meta["manual_image_grid"];
+        if(rect.is_array() && rect.size()==4) {
+            imageX=rect[0].get_double(); imageY=rect[1].get_double();
+            imageW=rect[2].get_double(); imageH=rect[3].get_double();
+        }
+    }
+    auto imageGrid=utils::Json::array();
+    imageGrid.push_back(imageX+_pointGrowTool.offset().x);
+    imageGrid.push_back(imageY+_pointGrowTool.offset().y);
+    imageGrid.push_back(imageW); imageGrid.push_back(imageH);
+    surface->meta["manual_image_grid"]=imageGrid;
     ++_pointGrowRevision;
     if (_state) _state->setSurface("segmentation",surface,false,true);
     emitPendingChanges();
@@ -139,6 +137,7 @@ bool SegmentationModule::finishPointGrow(bool apply)
         while (nextStates.size() < 20 && _pointGrowTool.redo()) {
             auto next = segmentation::snapshotSurface(*surface);
             _pointGrowTool.points().copyTo(*next->rawPointsPtr());
+            surface_display::writeOffsets(*next,_pointGrowTool.displayOffsets());
             next->invalidateCache();
             nextStates.push_back(std::move(next));
         }
@@ -155,6 +154,7 @@ bool SegmentationModule::finishPointGrow(bool apply)
                 ? segmentation::snapshotSurface(*surface) : _pointGrowSnapshot;
             if (_pointGrowTool.changed()) {
                 _pointGrowTool.points().copyTo(*previous->rawPointsPtr());
+                surface_display::writeOffsets(*previous,_pointGrowTool.displayOffsets());
                 previous->invalidateCache();
             }
             previousStates.push_back(std::move(previous));

@@ -574,6 +574,13 @@ void SegmentationModule::loadEditRegionsFromSurface()
         }
     }
     applyEditRegion();
+    qCInfo(lcSegModule) << "Editing regions loaded:" << _editRegions.size() << "selected" << _editRegionIndex
+                        << (_editManager && _editManager->hasSession() && _editManager->baseSurface()
+                                ? QString::fromStdString(_editManager->baseSurface()->meta.is_object() && _editManager->baseSurface()->meta.contains("editing_regions") ? "meta has editing_regions" : "meta lacks editing_regions")
+                                : QStringLiteral("no session"));
+    for (const auto& region : _editRegions) {
+        qCInfo(lcSegModule) << "  region" << region.label << "cols" << region.cells.x << region.cells.x + region.cells.width << "rows" << region.cells.y << region.cells.y + region.cells.height;
+    }
     emit editRegionsChanged();
 }
 

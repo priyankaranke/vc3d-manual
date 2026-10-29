@@ -12,7 +12,8 @@ class PointGrowTool
 {
 public:
     using GridKey = SegmentationEditManager::GridKey;
-    bool begin(const cv::Mat_<cv::Vec3f>& points);
+    bool begin(const cv::Mat_<cv::Vec3f>& points, cv::Vec2f gridScale = {1,1},
+               const cv::Mat_<cv::Vec2f>& displayOffsets = {});
     bool addPoint(const cv::Vec3f& world, int width, std::string& status);
     // Pick only close, visible vertices in a CT slice, including imported ones.
     std::optional<GridKey> pickPointNearSlice(const cv::Vec3f& world,
@@ -35,16 +36,25 @@ public:
     // Clicks whose nearest chart vertex lies outside this grid region are refused (stitched windings).
     void setEditRegion(std::optional<cv::Rect> region) { _editRegion = region; }
     std::optional<cv::Rect> editRegion() const { return _editRegion; }
+    const cv::Mat_<cv::Vec2f>& displayOffsets() const { return _displayOffsets; }
     std::vector<GridKey> changedVertices() const;
     std::vector<cv::Vec3f> anchors() const;
 
 private:
     struct Anchor { cv::Point grid; cv::Vec3f world; };
     struct Change { cv::Point grid; cv::Vec3f before; };
-    struct Undo { std::vector<Change> changes; std::vector<Anchor> anchors; };
+    struct DisplayChange { cv::Point grid; cv::Vec2f before; };
+    struct Undo {
+        std::vector<Change> changes;
+        std::vector<Anchor> anchors;
+        std::vector<DisplayChange> displayChanges;
+    };
+    void flattenDisplay(Undo& undo);
     bool moveHistory(std::vector<Undo>& from, std::vector<Undo>& to);
     void pad(int amount);
     cv::Mat_<cv::Vec3f> _points, _original;
+    cv::Mat_<cv::Vec2f> _displayOffsets;
+    cv::Vec2f _gridScale{1,1};
     cv::Point _offset;
     std::optional<cv::Rect> _editRegion;
     std::vector<Anchor> _anchors;

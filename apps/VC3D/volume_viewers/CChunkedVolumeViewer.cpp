@@ -1,5 +1,6 @@
 #include "CChunkedVolumeViewer.hpp"
 #include "SurfacePreviewFootprint.hpp"
+#include "SurfaceDisplayMap.hpp"
 #include "SurfaceNavigation.hpp"
 
 #include "CState.hpp"
@@ -621,6 +622,7 @@ struct CChunkedVolumeViewer::GeneratedSurfaceCache {
     std::mutex mutex;
     bool valid = false;
     Surface* surface = nullptr;
+    std::shared_ptr<const SurfaceDisplayMap> displayMap;
     int fbW = 0;
     int fbH = 0;
     float scale = 0.0f;
@@ -1004,6 +1006,10 @@ void CChunkedVolumeViewer::onSurfaceChanged(const std::string& name,
     }
 
     _surfWeak = surf;
+    _displayMap = nullptr;
+    if (auto* quad = dynamic_cast<QuadSurface*>(surf.get()))
+        _displayMap = SurfaceDisplayMap::fromSurface(*quad);
+    _warpedImageCache = {};
     if (isSameCurrentSurface && isEditUpdate) {
         _genCacheDirty = true;
         _zOffWorldDir = {0, 0, 0};
@@ -1413,6 +1419,7 @@ struct CChunkedVolumeViewer::RenderContext {
     float windowHigh = 255.0f;
     std::string baseColormapId;
     std::shared_ptr<Surface> surf;
+    std::shared_ptr<const SurfaceDisplayMap> displayMap;
     std::shared_ptr<vc::render::ChunkCache> chunkArray;
     std::shared_ptr<Volume> overlayVolume;
     std::shared_ptr<vc::render::ChunkCache> overlayChunkArray;
@@ -1701,6 +1708,7 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
             genCacheHit =
                 ctx.genCache->valid &&
                 ctx.genCache->surface == ctx.surf.get() &&
+                ctx.genCache->displayMap == ctx.displayMap &&
                 ctx.genCache->fbW == ctx.fbW &&
                 ctx.genCache->fbH == ctx.fbH &&
                 ctx.genCache->scale == ctx.scale &&
@@ -1719,10 +1727,15 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
         phaseGenCached = genCacheHit;
         if (!genCacheHit) {
             if (profilePhases) phaseTimer.restart();
-            ctx.surf->gen(&coords, needSurfaceNormals ? &normals : nullptr,
-                          cv::Size(ctx.fbW, ctx.fbH), {0, 0, 0}, ctx.scale, offset);
-            if (auto* quad = dynamic_cast<QuadSurface*>(ctx.surf.get()))
-                guardSurfacePreviewFootprint(*quad,coords,normals,ctx.scale,offset);
+            if (ctx.displayMap) {
+                ctx.displayMap->gen(coords,needSurfaceNormals ? &normals : nullptr,
+                    cv::Size(ctx.fbW,ctx.fbH),{ctx.surfacePtrX,ctx.surfacePtrY},ctx.scale);
+            } else {
+                ctx.surf->gen(&coords, needSurfaceNormals ? &normals : nullptr,
+                              cv::Size(ctx.fbW, ctx.fbH), {0, 0, 0}, ctx.scale, offset);
+                if (auto* quad = dynamic_cast<QuadSurface*>(ctx.surf.get()))
+                    guardSurfacePreviewFootprint(*quad,coords,normals,ctx.scale,offset);
+            }
             applyPerPixelNormalOffset(coords, normals, ctx.zOff);
             if (profilePhases) phaseGenMs = phaseTimer.elapsed();
 
@@ -1730,6 +1743,7 @@ CChunkedVolumeViewer::RenderResult CChunkedVolumeViewer::renderFrame(RenderConte
                 std::lock_guard lock(ctx.genCache->mutex);
                 ctx.genCache->valid = true;
                 ctx.genCache->surface = ctx.surf.get();
+                ctx.genCache->displayMap = ctx.displayMap;
                 ctx.genCache->fbW = ctx.fbW;
                 ctx.genCache->fbH = ctx.fbH;
                 ctx.genCache->scale = ctx.scale;
@@ -1868,6 +1882,7 @@ std::optional<CChunkedVolumeViewer::PendingRenderJob> CChunkedVolumeViewer::capt
     job.windowHigh = _windowHigh;
     job.baseColormapId = _baseColormapId;
     job.surf = surf;
+    job.displayMap = _displayMap;
     job.surfaceName = _surfName;
     job.chunkArray = _chunkArray;
     job.overlayVolume = _overlayVolume;
@@ -1918,6 +1933,7 @@ bool CChunkedVolumeViewer::renderJobsSameGeometry(const PendingRenderJob& a,
            a.windowHigh == b.windowHigh &&
            a.baseColormapId == b.baseColormapId &&
            a.surf.get() == b.surf.get() &&
+           a.displayMap == b.displayMap &&
            a.surfaceName == b.surfaceName &&
            a.chunkArray.get() == b.chunkArray.get() &&
            a.overlayVolume.get() == b.overlayVolume.get() &&
@@ -1945,13 +1961,17 @@ void CChunkedVolumeViewer::updateDisplayedFramebufferMapping()
     const qreal currentHalfH = static_cast<qreal>(_framebuffer.height()) * 0.5;
     const qreal renderedHalfW = static_cast<qreal>(job.fbW) * 0.5;
     const qreal renderedHalfH = static_cast<qreal>(job.fbH) * 0.5;
+    const cv::Vec2f oldCenter = job.displayMap ? job.displayMap->forward({job.surfacePtrX,job.surfacePtrY})
+                                              : cv::Vec2f(job.surfacePtrX,job.surfacePtrY);
+    const cv::Vec2f newCenter = _displayMap ? _displayMap->forward({_surfacePtrX,_surfacePtrY})
+                                         : cv::Vec2f(_surfacePtrX,_surfacePtrY);
     const QPointF offset(
         currentHalfW +
-            (static_cast<qreal>(job.surfacePtrX) - static_cast<qreal>(_surfacePtrX)) *
+            (static_cast<qreal>(oldCenter[0]) - static_cast<qreal>(newCenter[0])) *
                 static_cast<qreal>(_scale) -
             renderedHalfW * ratio,
         currentHalfH +
-            (static_cast<qreal>(job.surfacePtrY) - static_cast<qreal>(_surfacePtrY)) *
+            (static_cast<qreal>(oldCenter[1]) - static_cast<qreal>(newCenter[1])) *
                 static_cast<qreal>(_scale) -
             renderedHalfH * ratio);
     _view->setDirectFramebufferMapping(ratio, offset);
@@ -1991,6 +2011,7 @@ void CChunkedVolumeViewer::startRenderJob(PendingRenderJob job)
     ctx.windowHigh = job.windowHigh;
     ctx.baseColormapId = job.baseColormapId;
     ctx.surf = job.surf;
+    ctx.displayMap = job.displayMap;
     ctx.chunkArray = job.chunkArray;
     ctx.overlayVolume = job.overlayVolume;
     ctx.overlayChunkArray = job.overlayChunkArray;
@@ -2328,8 +2349,14 @@ void CChunkedVolumeViewer::panByF(float dx, float dy)
 {
     markInteractiveMotion(std::hypot(double(dx), double(dy)));
     const float invScale = _panSensitivity / _scale;
-    _surfacePtrX -= dx * invScale;
-    _surfacePtrY -= dy * invScale;
+    if (_displayMap) {
+        const auto center = _displayMap->inverse(_displayMap->forward({_surfacePtrX,_surfacePtrY})
+                                                 - cv::Vec2f(dx,dy)*invScale);
+        _surfacePtrX=center[0]; _surfacePtrY=center[1];
+    } else {
+        _surfacePtrX -= dx * invScale;
+        _surfacePtrY -= dy * invScale;
+    }
     if (_contentMaxU > _contentMinU) {
         _surfacePtrX = std::clamp(_surfacePtrX, _contentMinU, _contentMaxU);
         _surfacePtrY = std::clamp(_surfacePtrY, _contentMinV, _contentMaxV);
@@ -2359,8 +2386,11 @@ void CChunkedVolumeViewer::zoomStepsAt(int steps, const QPointF& scenePos)
     if (mx >= 0 && mx < vpW && my >= 0 && my < vpH) {
         const float dx = mx - vpW * 0.5f;
         const float dy = my - vpH * 0.5f;
-        _surfacePtrX += dx * (1.0f / _scale - 1.0f / newScale);
-        _surfacePtrY += dy * (1.0f / _scale - 1.0f / newScale);
+        const cv::Vec2f delta = cv::Vec2f(dx,dy)*(1.0f/_scale-1.0f/newScale);
+        const auto center = _displayMap
+            ? _displayMap->inverse(_displayMap->forward({_surfacePtrX,_surfacePtrY})+delta)
+            : cv::Vec2f(_surfacePtrX,_surfacePtrY)+delta;
+        _surfacePtrX=center[0]; _surfacePtrY=center[1];
     }
     _scale = newScale;
     recalcPyramidLevel();
@@ -3048,8 +3078,11 @@ QPointF CChunkedVolumeViewer::surfaceToScene(float surfX, float surfY) const
 {
     const float vpCx = static_cast<float>(_framebuffer.width()) * 0.5f;
     const float vpCy = static_cast<float>(_framebuffer.height()) * 0.5f;
-    const qreal vx = (surfX - _surfacePtrX) * _scale + vpCx;
-    const qreal vy = (surfY - _surfacePtrY) * _scale + vpCy;
+    const auto point = _displayMap ? _displayMap->forward({surfX,surfY}) : cv::Vec2f(surfX,surfY);
+    const auto center = _displayMap ? _displayMap->forward({_surfacePtrX,_surfacePtrY})
+                                    : cv::Vec2f(_surfacePtrX,_surfacePtrY);
+    const qreal vx = (point[0] - center[0]) * _scale + vpCx;
+    const qreal vy = (point[1] - center[1]) * _scale + vpCy;
     return QPointF(vx, vy);
 }
 
@@ -3059,8 +3092,33 @@ cv::Vec2f CChunkedVolumeViewer::sceneToSurface(const QPointF& scenePos) const
         return {0, 0};
     const float vpCx = static_cast<float>(_framebuffer.width()) * 0.5f;
     const float vpCy = static_cast<float>(_framebuffer.height()) * 0.5f;
-    return {(static_cast<float>(scenePos.x()) - vpCx) / _scale + _surfacePtrX,
-            (static_cast<float>(scenePos.y()) - vpCy) / _scale + _surfacePtrY};
+    const auto center = _displayMap ? _displayMap->forward({_surfacePtrX,_surfacePtrY})
+                                    : cv::Vec2f(_surfacePtrX,_surfacePtrY);
+    const auto position = center + cv::Vec2f((float(scenePos.x())-vpCx)/_scale,
+                                            (float(scenePos.y())-vpCy)/_scale);
+    return _displayMap ? _displayMap->inverse(position) : position;
+}
+
+QImage CChunkedVolumeViewer::surfaceImageInScene(const QImage& source, const QRectF& imageGrid) const
+{
+    if (!_displayMap || source.isNull() || _framebuffer.isNull()) return {};
+    const cv::Vec2f center(_surfacePtrX,_surfacePtrY);
+    auto& cache = _warpedImageCache;
+    if (cache.map==_displayMap.get() && cache.imageKey==source.cacheKey() &&
+        cache.center==center && cache.scale==_scale && cache.imageGrid==imageGrid && cache.image.size()==_framebuffer.size())
+        return cache.image;
+    auto map = _displayMap->gridMap(cv::Size(_framebuffer.width(),_framebuffer.height()),center,_scale);
+    for(auto& p:map) {
+        p[0] = (p[0]-imageGrid.x())*source.width()/imageGrid.width();
+        p[1] = (p[1]-imageGrid.y())*source.height()/imageGrid.height();
+    }
+    const auto rgba = source.convertToFormat(QImage::Format_ARGB32);
+    cv::Mat src(rgba.height(),rgba.width(),CV_8UC4,const_cast<uchar*>(rgba.constBits()),rgba.bytesPerLine());
+    QImage result(_framebuffer.size(),QImage::Format_ARGB32);
+    cv::Mat dst(result.height(),result.width(),CV_8UC4,result.bits(),result.bytesPerLine());
+    cv::remap(src,dst,map,cv::noArray(),cv::INTER_LINEAR,cv::BORDER_CONSTANT,cv::Scalar());
+    cache={_displayMap.get(),source.cacheKey(),center,_scale,imageGrid,result};
+    return result;
 }
 
 QRectF CChunkedVolumeViewer::surfaceRectToSceneRect(const QRectF& surfRect) const

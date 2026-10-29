@@ -1,5 +1,6 @@
 #include "PointGrowTool.hpp"
 #include "ThinPlateSpline3d.hpp"
+#include "volume_viewers/SurfaceDisplayMap.hpp"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -23,13 +24,17 @@ double distanceToLine(cv::Point p, cv::Point a, cv::Point b) {
 }
 
 void PointGrowTool::clear() {
-    _points.release(); _original.release(); _anchors.clear(); _undo.clear(); _redo.clear(); _offset = {};
+    _points.release(); _original.release(); _displayOffsets.release(); _anchors.clear(); _undo.clear(); _redo.clear(); _offset = {};
 }
 
-bool PointGrowTool::begin(const cv::Mat_<cv::Vec3f>& points) {
+bool PointGrowTool::begin(const cv::Mat_<cv::Vec3f>& points, cv::Vec2f gridScale,
+                          const cv::Mat_<cv::Vec2f>& displayOffsets) {
     clear();
-    if (points.empty()) return false;
+    if (points.empty() || gridScale[0]<=0 || gridScale[1]<=0) return false;
     _points = points.clone(); _original = points.clone();
+    _gridScale = gridScale;
+    _displayOffsets = displayOffsets.size()==points.size()
+        ? displayOffsets.clone() : cv::Mat_<cv::Vec2f>(points.size(),cv::Vec2f(0,0));
     pad(16);
     return true;
 }
@@ -41,6 +46,9 @@ void PointGrowTool::pad(int amount) {
         m = std::move(next);
     };
     grow(_points); grow(_original);
+    cv::Mat_<cv::Vec2f> next(_displayOffsets.rows+2*amount,_displayOffsets.cols+2*amount,cv::Vec2f(0,0));
+    _displayOffsets.copyTo(next(cv::Rect(amount,amount,_displayOffsets.cols,_displayOffsets.rows)));
+    _displayOffsets=std::move(next);
     const cv::Point delta(amount, amount);
     _offset += delta;
     if (_editRegion) { _editRegion->x += amount; _editRegion->y += amount; }
@@ -48,6 +56,7 @@ void PointGrowTool::pad(int amount) {
     for (auto* history : {&_undo, &_redo})
         for (auto& u : *history) {
             for (auto& c : u.changes) c.grid += delta;
+            for (auto& c : u.displayChanges) c.grid += delta;
             for (auto& a : u.anchors) a.grid += delta;
         }
 }
@@ -91,6 +100,7 @@ bool PointGrowTool::removePoint(GridKey key, std::string& status)
     _points(grid) = {-1,-1,-1};
     _anchors.erase(std::remove_if(_anchors.begin(), _anchors.end(),
         [&](const Anchor& anchor) { return anchor.grid == grid; }), _anchors.end());
+    flattenDisplay(undo);
     _undo.push_back(std::move(undo));
     _redo.clear();
     status = "Point deleted. Changes save automatically; Cmd/Ctrl+Z restores it.";
@@ -266,7 +276,8 @@ bool PointGrowTool::addPoint(const cv::Vec3f& world, int width, std::string& sta
         undo.changes.push_back({p,_points(p)}); _points(p)=value;
     }
     _anchors.erase(std::remove_if(_anchors.begin(),_anchors.end(),[&](const Anchor& a){return a.grid==target;}),_anchors.end());
-    _anchors.push_back({target,world}); _undo.push_back(std::move(undo));
+    _anchors.push_back({target,world}); flattenDisplay(undo);
+    _undo.push_back(std::move(undo));
     _redo.clear();
     committed = true;
     status = touchUp
@@ -290,9 +301,24 @@ bool PointGrowTool::adoptPreview(const cv::Mat_<cv::Vec3f>& points, bool* change
     points.copyTo(_points);
     // An intentional brush stroke moves old click constraints with the sheet.
     for (auto& anchor : _anchors) anchor.world = _points(anchor.grid);
+    flattenDisplay(undo);
     _undo.push_back(std::move(undo));
     _redo.clear();
     return true;
+}
+
+void PointGrowTool::flattenDisplay(Undo& undo) {
+    if (undo.changes.empty()) return;
+    cv::Rect changed(undo.changes.front().grid,cv::Size(1,1));
+    for (const auto& c:undo.changes) changed |= cv::Rect(c.grid,cv::Size(1,1));
+    const cv::Rect region=cv::Rect(changed.x-8,changed.y-8,changed.width+16,changed.height+16)
+        & cv::Rect(0,0,_points.cols,_points.rows);
+    const auto before=_displayOffsets(region).clone();
+    surface_display::relax(_points,_displayOffsets,_gridScale,changed);
+    for(int r=0;r<region.height;++r) for(int c=0;c<region.width;++c) {
+        const cv::Point p(c+region.x,r+region.y);
+        if(_displayOffsets(p)!=before(r,c)) undo.displayChanges.push_back({p,before(r,c)});
+    }
 }
 
 bool PointGrowTool::moveHistory(std::vector<Undo>& from, std::vector<Undo>& to) {
@@ -301,6 +327,7 @@ bool PointGrowTool::moveHistory(std::vector<Undo>& from, std::vector<Undo>& to) 
     // Swap the exact values instead of rerunning the fit/brush. This also
     // preserves constraints and invalid cells after a grid expansion.
     for (auto& c:entry.changes) std::swap(_points(c.grid),c.before);
+    for (auto& c:entry.displayChanges) std::swap(_displayOffsets(c.grid),c.before);
     _anchors.swap(entry.anchors);
     to.push_back(std::move(entry));
     return true;
