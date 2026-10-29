@@ -554,3 +554,9 @@ vc_add_test(NAME test_segmentation_edit_smoothing
             ${segmentation_edit_smoothing_moc}
     LIBS doctest::doctest Qt6::Core Qt6::Gui Qt6::Concurrent vc_core
     INCLUDES ${PROJECT_SOURCE_DIR}/apps/VC3D)
+
+vc_add_test(NAME test_surface_display_map_rotation
+    SOURCES test_surface_display_map_rotation.cpp
+            ${PROJECT_SOURCE_DIR}/apps/VC3D/volume_viewers/SurfaceDisplayMap.cpp
+    LIBS doctest::doctest vc_core
+    INCLUDES ${PROJECT_SOURCE_DIR}/apps/VC3D)

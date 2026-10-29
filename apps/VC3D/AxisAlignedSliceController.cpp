@@ -89,7 +89,8 @@ struct SegmentSliceFrame {
 std::optional<SegmentSliceFrame> segmentSliceFrameAtFocus(
     QuadSurface& segment,
     const cv::Vec3f& focus,
-    SurfacePatchIndex* patchIndex)
+    SurfacePatchIndex* patchIndex,
+    float levelDirectionDeg = 0.0f)
 {
     if (!isFiniteVec3(focus)) {
         return std::nullopt;
@@ -137,11 +138,24 @@ std::optional<SegmentSliceFrame> segmentSliceFrameAtFocus(
         return std::nullopt;
     }
 
-    const cv::Vec3f xNormal = xDir - surfOrigin;
-    const cv::Vec3f yNormal = yDir - surfOrigin;
+    cv::Vec3f xNormal = xDir - surfOrigin;
+    cv::Vec3f yNormal = yDir - surfOrigin;
     if (!isFiniteVec3(xNormal) || !isFiniteVec3(yNormal) ||
         cv::norm(xNormal) <= kEpsilon || cv::norm(yNormal) <= kEpsilon) {
         return std::nullopt;
+    }
+    if (std::abs(levelDirectionDeg) > 1e-4f) {
+        // The flattened view is turned so the grid direction (cos t, sin t) runs level on screen.
+        // Cut across it (seg xz) and along it (seg yz); at t = 0 this is exactly the stock frame.
+        const float t = levelDirectionDeg * kDegToRad;
+        const cv::Vec3f along = xNormal * std::cos(t) + yNormal * std::sin(t);
+        const cv::Vec3f across = yNormal * std::cos(t) - xNormal * std::sin(t);
+        if (!isFiniteVec3(along) || !isFiniteVec3(across) ||
+            cv::norm(along) <= kEpsilon || cv::norm(across) <= kEpsilon) {
+            return std::nullopt;
+        }
+        xNormal = along;
+        yNormal = across;
     }
 
     return SegmentSliceFrame{surfOrigin, xNormal, yNormal, ptr, row, col, dist};
@@ -415,6 +429,9 @@ void AxisAlignedSliceController::applyOrientation(Surface* sourceOverride)
         segment = dynamic_cast<QuadSurface*>(segmentHolder.get());
     }
 
+    // The flattened view's rotation is re-applied here so viewers created by a view reset pick it up.
+    applyFlatViewRotation(_flatViewRotationDeg);
+
     const bool useCanonical = _enabled || !segment;
 
     if (useCanonical) {
@@ -433,7 +450,8 @@ void AxisAlignedSliceController::applyOrientation(Surface* sourceOverride)
         }
 
         auto* patchIndex = _viewerManager ? _viewerManager->surfacePatchIndexIfReady() : nullptr;
-        const auto frame = segmentSliceFrameAtFocus(*segment, origin, patchIndex);
+        // Screen-horizontal is the grid direction at -rotation (the display is rotated by +rotation).
+        const auto frame = segmentSliceFrameAtFocus(*segment, origin, patchIndex, -_flatViewRotationDeg);
         if (!frame) {
             if (!hadSegmentPlanes) {
                 configurePlane("seg xz", {0.0f, 1.0f, 0.0f}, _segXZRotationDeg, _segXZTilt);
@@ -459,6 +477,23 @@ void AxisAlignedSliceController::applyOrientation(Surface* sourceOverride)
         _planeSlicingOverlay->refreshAll();
     }
     updateTiltHandles();
+}
+
+void AxisAlignedSliceController::setFlatViewRotation(float degrees)
+{
+    _flatViewRotationDeg = normalizeDegrees(degrees);
+    applyFlatViewRotation(_flatViewRotationDeg);
+    applyOrientation();
+}
+
+void AxisAlignedSliceController::applyFlatViewRotation(float degrees)
+{
+    if (!_viewerManager) return;
+    _viewerManager->forEachBaseViewer([degrees](VolumeViewerBase* viewer) {
+        if (viewer && viewer->surfName() == "segmentation")
+            if (auto* chunked = dynamic_cast<CChunkedVolumeViewer*>(viewer))
+                chunked->setFlatViewRotationDegrees(degrees);
+    });
 }
 
 float AxisAlignedSliceController::normalizeDegrees(float degrees)

@@ -35,6 +35,7 @@
 #include <QFont>
 #include "segmentation/EditRegions.hpp"
 #include <QGraphicsScene>
+#include <QPolygonF>
 #include <QGraphicsSimpleTextItem>
 #include <QMessageBox>
 #include <QPainter>
@@ -1008,7 +1009,7 @@ void CChunkedVolumeViewer::onSurfaceChanged(const std::string& name,
     _surfWeak = surf;
     _displayMap = nullptr;
     if (auto* quad = dynamic_cast<QuadSurface*>(surf.get()))
-        _displayMap = SurfaceDisplayMap::fromSurface(*quad);
+        _displayMap = SurfaceDisplayMap::fromSurface(*quad, _flatViewRotationDeg);
     _warpedImageCache = {};
     if (isSameCurrentSurface && isEditUpdate) {
         _genCacheDirty = true;
@@ -1336,6 +1337,31 @@ void CChunkedVolumeViewer::setSegmentationIntersectionDeferral(bool active)
         _deferredSegmentationIntersectionsDirty = false;
         scheduleIntersectionRender("deferred segmentation intersection refresh");
     }
+}
+
+void CChunkedVolumeViewer::setFlatViewRotationDegrees(float degrees)
+{
+    if (!std::isfinite(degrees) || _closing) return;
+    degrees = std::remainder(degrees, 360.0f);
+    if (std::abs(degrees - _flatViewRotationDeg) < 1e-5f) return;
+    _flatViewRotationDeg = degrees;
+    auto surf = _surfWeak.lock();
+    auto* quad = dynamic_cast<QuadSurface*>(surf.get());
+    if (!quad) return;
+    _displayMap = SurfaceDisplayMap::fromSurface(*quad, degrees);
+    _warpedImageCache = {};
+    _genCacheDirty = true;
+    // A previous CT frame cannot be translated/scaled into the new angle.
+    // Blank it until a matching asynchronous render is ready.
+    _framebuffer.fill(Qt::black);
+    _displayedRenderJob.reset();
+    _lastRenderResult.reset();
+    invalidateIntersect();
+    syncCameraTransform();
+    refreshSameWrapAnnotationOverlay();
+    renderVisible(true, "flat view rotation");
+    scheduleIntersectionRender("flat view rotation");
+    emit overlaysUpdated();
 }
 
 void CChunkedVolumeViewer::syncCameraTransform()
@@ -2164,6 +2190,15 @@ void CChunkedVolumeViewer::finishRenderOnMainThread(std::shared_ptr<RenderResult
         return;
     }
 
+    const auto& renderedMap = result->renderJob.displayMap;
+    const float renderedAngle = renderedMap ? renderedMap->rotationDegrees() : 0;
+    const float currentAngle = _displayMap ? _displayMap->rotationDegrees() : 0;
+    if (std::abs(renderedAngle - currentAngle) > 1e-5f) {
+        submitPendingRenderJobIfNeeded();
+        profile.setDetails("action=drop_previous_view_angle");
+        return;
+    }
+
     _framebuffer = std::move(result->framebuffer);
     _displayedRenderJob = result->renderJob;
     _lastRenderResult = result;
@@ -2502,8 +2537,20 @@ void CChunkedVolumeViewer::resetViewForCurrentContent(bool forceRender)
         return;
     }
 
-    _surfacePtrX = (minU + maxU) * 0.5f;
-    _surfacePtrY = (minV + maxV) * 0.5f;
+    cv::Vec2f viewCenter((minU + maxU) * 0.5f, (minV + maxV) * 0.5f);
+    if (_displayMap) {
+        // Fit the rotated/relaxed display extent, not the nominal grid box.
+        const std::array<cv::Vec2f,4> corners = {{{minU,minV},{maxU,minV},{minU,maxV},{maxU,maxV}}};
+        auto lo = _displayMap->forward(corners[0]), hi = lo;
+        for (const auto& corner : corners) {
+            const auto p = _displayMap->forward(corner);
+            for (int k=0;k<2;++k) {lo[k]=std::min(lo[k],p[k]);hi[k]=std::max(hi[k],p[k]);}
+        }
+        minU=lo[0];minV=lo[1];maxU=hi[0];maxV=hi[1];
+        viewCenter = _displayMap->inverse((lo+hi)*0.5f);
+    }
+    _surfacePtrX = viewCenter[0];
+    _surfacePtrY = viewCenter[1];
     _scale = fitScaleForExtent(maxU - minU,
                                maxV - minV,
                                viewportSize.width(),
@@ -3123,11 +3170,11 @@ QImage CChunkedVolumeViewer::surfaceImageInScene(const QImage& source, const QRe
 
 QRectF CChunkedVolumeViewer::surfaceRectToSceneRect(const QRectF& surfRect) const
 {
-    const QPointF a = surfaceToScene(static_cast<float>(surfRect.left()),
-                                     static_cast<float>(surfRect.top()));
-    const QPointF b = surfaceToScene(static_cast<float>(surfRect.right()),
-                                     static_cast<float>(surfRect.bottom()));
-    return QRectF(a, b).normalized();
+    QPolygonF corners;
+    for (const auto& p : {surfRect.topLeft(), surfRect.topRight(),
+                          surfRect.bottomLeft(), surfRect.bottomRight()})
+        corners << surfaceToScene(float(p.x()), float(p.y()));
+    return corners.boundingRect();
 }
 
 cv::Vec2f CChunkedVolumeViewer::sceneToSurfaceCoords(const QPointF& scenePos) const

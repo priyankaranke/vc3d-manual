@@ -169,6 +169,19 @@
 #include "vc/lasagna/LasagnaNormalSampler.hpp"
 #include <utils/zarr.hpp>
 
+namespace {
+// Per-segment memory of the flattened view's rotation (Segment tab "Rotate"). QSettings uses '/' as a
+// group separator, so the segment folder name is sanitized.
+QString flatViewRotationSettingKey(const Surface* segment)
+{
+    std::string key = segment ? segment->path.filename().string() : std::string();
+    if (key.empty() && segment) key = segment->id;
+    QString name = QString::fromStdString(key);
+    name.replace(QLatin1Char('/'), QLatin1Char('_'));
+    return QStringLiteral("viewer/flat_rotation/") + name;
+}
+} // namespace
+
 
 
 
@@ -7173,6 +7186,29 @@ void CWindow::CreateWidgets(void)
         if (const auto* focus = _state->poi("focus")) recenterPlaneViewersOn(focus->p);
     });
     manualRow->addWidget(focusPatch);
+    auto* rotateLabel = new QLabel(tr("Rotate"), ui.tabSegment);
+    rotateLabel->setObjectName(QStringLiteral("directViewRotationLabel"));
+    auto* rotateSpin = new QDoubleSpinBox(ui.tabSegment);
+    rotateSpin->setObjectName(QStringLiteral("directViewRotation"));
+    rotateSpin->setRange(-180.0, 180.0);
+    rotateSpin->setDecimals(1);
+    rotateSpin->setSingleStep(5.0);
+    rotateSpin->setWrapping(true);
+    rotateSpin->setSuffix(QStringLiteral("\u00b0"));
+    rotateSpin->setKeyboardTracking(false);
+    rotateSpin->setFocusPolicy(Qt::ClickFocus);
+    rotateSpin->setToolTip(tr("Turn the flattened view (degrees, positive = clockwise) until a fiber or text line runs level. "
+                              "The XZ/YZ cuts follow, so YZ stays the cut along the level direction. Display only: no node is "
+                              "moved or resampled. Remembered per segment."));
+    connect(rotateSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double degrees) {
+        if (_axisAlignedSliceController) _axisAlignedSliceController->setFlatViewRotation(static_cast<float>(degrees));
+        if (Surface* seg = _state ? _state->surfaceRaw("segmentation") : nullptr) {
+            QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
+            settings.setValue(flatViewRotationSettingKey(seg), degrees);
+        }
+    });
+    manualRow->addWidget(rotateLabel);
+    manualRow->addWidget(rotateSpin);
     auto* regionLabel = new QLabel(tr("Winding"),ui.tabSegment);
     regionLabel->setObjectName(QStringLiteral("directEditRegionLabel"));
     auto* regionCombo = new QComboBox(ui.tabSegment);
@@ -9551,6 +9587,7 @@ void CWindow::onSurfaceActivated(const QString& surfaceId, QuadSurface* surface)
     }
 
     if (_segmentationModule) _segmentationModule->ensureDirectCTEditing();
+    syncFlatViewRotationControl();
     maybeAttachBenchRecorder();
 }
 
@@ -9685,6 +9722,31 @@ void CWindow::onSurfaceActivatedPreserveEditing(const QString& surfaceId, QuadSu
         _surfaceAffineTransforms->refresh();
     }
     if (_segmentationModule) _segmentationModule->ensureDirectCTEditing();
+    syncFlatViewRotationControl();
+}
+
+// Segment tab "Rotate": restore the remembered angle of the active segment (0 for a new one) and apply it
+// to the flattened view and the cuts. VC3D_VIEW_ROTATION=<deg> (launch/test aid) overrides the memory.
+void CWindow::syncFlatViewRotationControl()
+{
+    Surface* seg = _state ? _state->surfaceRaw("segmentation") : nullptr;
+    float degrees = 0.0f;
+    if (seg) {
+        QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
+        degrees = settings.value(flatViewRotationSettingKey(seg), 0.0).toFloat();
+        if (const QByteArray env = qgetenv("VC3D_VIEW_ROTATION"); !env.isEmpty()) {
+            bool ok = false;
+            const float value = env.toFloat(&ok);
+            if (ok) degrees = value;
+        }
+    }
+    if (!std::isfinite(degrees)) degrees = 0.0f;
+    if (auto* spin = findChild<QDoubleSpinBox*>(QStringLiteral("directViewRotation"))) {
+        const QSignalBlocker blocker(spin);
+        spin->setValue(degrees);
+        spin->setEnabled(seg != nullptr);
+    }
+    if (_axisAlignedSliceController) _axisAlignedSliceController->setFlatViewRotation(degrees);
 }
 
 void CWindow::onSurfaceWillBeDeleted(std::string name, std::shared_ptr<Surface> surf)

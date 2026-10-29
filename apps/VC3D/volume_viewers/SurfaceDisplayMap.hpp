@@ -26,10 +26,11 @@ cv::Rect relax(const cv::Mat_<cv::Vec3f>& points, cv::Mat_<cv::Vec2f>& offsets,
 class SurfaceDisplayMap
 {
 public:
-    static std::shared_ptr<const SurfaceDisplayMap> fromSurface(QuadSurface& surface);
+    static std::shared_ptr<const SurfaceDisplayMap> fromSurface(QuadSurface& surface,
+                                                               float rotationDegrees = 0);
     SurfaceDisplayMap(const cv::Mat_<cv::Vec3f>& points,
                       const cv::Mat_<cv::Vec2f>& offsets,
-                      cv::Vec2f scale, cv::Vec3f center);
+                      cv::Vec2f scale, cv::Vec3f center, float rotationDegrees = 0);
     cv::Vec2f forward(cv::Vec2f nominal) const;
     cv::Vec2f inverse(cv::Vec2f display) const;
     cv::Mat_<cv::Vec2f> gridMap(cv::Size pixels, cv::Vec2f nominalCenter,
@@ -37,11 +38,17 @@ public:
     void gen(cv::Mat_<cv::Vec3f>& coords, cv::Mat_<cv::Vec3f>* normals,
              cv::Size pixels, cv::Vec2f nominalCenter, float pixelsPerVoxel) const;
     cv::Size gridSize() const { return _points.size(); }
+    float rotationDegrees() const { return _rotationDegrees; }
 private:
+    // Rotation is applied after the saved local UV map. It never changes XYZ
+    // or the offsets that point growth continues to update.
+    cv::Vec2f rotate(cv::Vec2f p) const;
+    cv::Vec2f unrotate(cv::Vec2f p) const;
     cv::Vec2f vertex(int r, int c) const;
     cv::Vec2f toGrid(cv::Vec2f nominal) const;
     cv::Vec2f fromGrid(cv::Vec2f grid) const;
     cv::Mat_<cv::Vec3f> _points;
     cv::Mat_<cv::Vec2f> _offsets;
     cv::Vec2f _scale, _center, _maxOffset{0,0};
+    float _rotationDegrees{0}, _cos{1}, _sin{0};
 };

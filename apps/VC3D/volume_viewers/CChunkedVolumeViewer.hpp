@@ -204,6 +204,9 @@ public:
     bool isMeasurementActive() const;
     void clearMeasurement();
     void markSurfaceGeometryChanged();
+    // Display-only rotation of the flattened view (degrees, positive = clockwise on screen).
+    void setFlatViewRotationDegrees(float degrees);
+    float flatViewRotationDegrees() const { return _flatViewRotationDeg; }
     void setShiftScrollOverride(ShiftScrollOverride override) { _shiftScrollOverride = std::move(override); }
 
     CVolumeViewerView* graphicsView() const override { return _view; }
@@ -426,6 +429,7 @@ private:
     std::shared_ptr<GeneratedSurfaceCache> _genSurfaceCache;
     bool _genCacheDirty = true;
     std::shared_ptr<const SurfaceDisplayMap> _displayMap;
+    float _flatViewRotationDeg{0};
     struct WarpedImageCache {
         const SurfaceDisplayMap* map = nullptr;
         qint64 imageKey = 0;

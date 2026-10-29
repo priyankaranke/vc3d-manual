@@ -109,29 +109,38 @@ cv::Rect surface_display::relax(const cv::Mat_<cv::Vec3f>& points,
     return region;
 }
 
-std::shared_ptr<const SurfaceDisplayMap> SurfaceDisplayMap::fromSurface(QuadSurface& surface) {
+std::shared_ptr<const SurfaceDisplayMap> SurfaceDisplayMap::fromSurface(QuadSurface& surface, float degrees) {
+    if (!std::isfinite(degrees)) degrees=0;
+    degrees=std::remainder(degrees,360.f);
     auto offsets=surface_display::readOffsets(surface);
-    if(offsets.empty() || cv::norm(offsets,cv::NORM_INF)<1e-5) return {};
-    return std::make_shared<SurfaceDisplayMap>(surface.rawPoints(),offsets,surface.scale(),surface.center());
+    if(std::abs(degrees)<1e-5 && (offsets.empty() || cv::norm(offsets,cv::NORM_INF)<1e-5)) return {};
+    if(offsets.empty()) offsets=cv::Mat_<cv::Vec2f>(surface.rawPoints().size(),cv::Vec2f(0,0));
+    return std::make_shared<SurfaceDisplayMap>(surface.rawPoints(),offsets,surface.scale(),surface.center(),degrees);
 }
 
 SurfaceDisplayMap::SurfaceDisplayMap(const cv::Mat_<cv::Vec3f>& points,
-    const cv::Mat_<cv::Vec2f>& offsets,cv::Vec2f scale,cv::Vec3f center)
+    const cv::Mat_<cv::Vec2f>& offsets,cv::Vec2f scale,cv::Vec3f center,float degrees)
     : _points(points.clone()),_offsets(offsets.clone()),_scale(scale),_center(center[0],center[1]) {
+    _rotationDegrees=std::isfinite(degrees) ? std::remainder(degrees,360.f) : 0;
+    _cos=std::cos(_rotationDegrees*float(CV_PI/180));
+    _sin=std::sin(_rotationDegrees*float(CV_PI/180));
     for(const auto& d:_offsets) for(int k=0;k<2;++k) _maxOffset[k]=std::max(_maxOffset[k],std::abs(d[k]));
 }
+cv::Vec2f SurfaceDisplayMap::rotate(cv::Vec2f p) const {return {_cos*p[0]-_sin*p[1],_sin*p[0]+_cos*p[1]};}
+cv::Vec2f SurfaceDisplayMap::unrotate(cv::Vec2f p) const {return {_cos*p[0]+_sin*p[1],-_sin*p[0]+_cos*p[1]};}
 cv::Vec2f SurfaceDisplayMap::toGrid(cv::Vec2f p) const {return {(p[0]+_center[0])*_scale[0],(p[1]+_center[1])*_scale[1]};}
 cv::Vec2f SurfaceDisplayMap::fromGrid(cv::Vec2f p) const {return {p[0]/_scale[0]-_center[0],p[1]/_scale[1]-_center[1]};}
 cv::Vec2f SurfaceDisplayMap::vertex(int r,int c) const {return fromGrid({float(c),float(r)})+_offsets(r,c);}
 
 cv::Vec2f SurfaceDisplayMap::forward(cv::Vec2f p) const {
     auto g=toGrid(p); int c=int(std::floor(g[0])),r=int(std::floor(g[1]));
-    if(c<0||r<0||c+1>=_points.cols||r+1>=_points.rows) return p;
+    if(c<0||r<0||c+1>=_points.cols||r+1>=_points.rows) return rotate(p);
     const float u=g[0]-c,v=g[1]-r;
     const auto a=_offsets(r,c),b=_offsets(r,c+1),d=_offsets(r+1,c),e=_offsets(r+1,c+1);
-    return p+(u>=v ? (1-u)*a+(u-v)*b+v*e : (1-v)*a+u*e+(v-u)*d);
+    return rotate(p+(u>=v ? (1-u)*a+(u-v)*b+v*e : (1-v)*a+u*e+(v-u)*d));
 }
 cv::Vec2f SurfaceDisplayMap::inverse(cv::Vec2f p) const {
+    p=unrotate(p);
     const auto g=toGrid(p);
     const int rx=int(std::ceil(_maxOffset[0]*_scale[0]))+1,ry=int(std::ceil(_maxOffset[1]*_scale[1]))+1;
     const int c0=std::max(0,int(std::floor(g[0]))-rx),c1=std::min(_points.cols-2,int(std::floor(g[0]))+rx);
@@ -149,7 +158,15 @@ cv::Mat_<cv::Vec2f> SurfaceDisplayMap::gridMap(cv::Size pixels,cv::Vec2f nominal
     cv::Mat_<cv::Vec2f> map(pixels,cv::Vec2f(-1,-1));
     const auto center=forward(nominalCenter);
     const cv::Vec2f origin=center-cv::Vec2f(pixels.width/(2*zoom),pixels.height/(2*zoom));
-    const auto lo=toGrid(origin-_maxOffset),hi=toGrid(origin+cv::Vec2f(pixels.width/zoom,pixels.height/zoom)+_maxOffset);
+    // The inverse-rotated viewport needs all four corners. Using only its
+    // diagonal clips valid CT/overlay cells at oblique viewing angles.
+    cv::Vec2f lower=unrotate(origin),upper=lower;
+    for(const cv::Vec2f delta : {cv::Vec2f(pixels.width/zoom,0),
+            cv::Vec2f(0,pixels.height/zoom),cv::Vec2f(pixels.width/zoom,pixels.height/zoom)}) {
+        const auto p=unrotate(origin+delta);
+        for(int k=0;k<2;++k) {lower[k]=std::min(lower[k],p[k]);upper[k]=std::max(upper[k],p[k]);}
+    }
+    const auto lo=toGrid(lower-_maxOffset),hi=toGrid(upper+_maxOffset);
     const int r0=std::max(0,int(std::floor(lo[1]))),c0=std::max(0,int(std::floor(lo[0])));
     const int r1=std::min(_points.rows-2,int(std::ceil(hi[1]))),c1=std::min(_points.cols-2,int(std::ceil(hi[0])));
     auto raster=[&](cv::Vec2f a,cv::Vec2f b,cv::Vec2f c,cv::Vec2f ga,cv::Vec2f gb,cv::Vec2f gc) {
@@ -164,7 +181,7 @@ cv::Mat_<cv::Vec2f> SurfaceDisplayMap::gridMap(cv::Size pixels,cv::Vec2f nominal
         }
     };
     for(int r=r0;r<=r1;++r) for(int c=c0;c<=c1;++c) {
-        const auto a=vertex(r,c),b=vertex(r,c+1),d=vertex(r+1,c),e=vertex(r+1,c+1);
+        const auto a=rotate(vertex(r,c)),b=rotate(vertex(r,c+1)),d=rotate(vertex(r+1,c)),e=rotate(vertex(r+1,c+1));
         const cv::Vec2f ga(c,r),gb(c+1,r),gd(c,r+1),ge(c+1,r+1);
         raster(a,b,e,ga,gb,ge);raster(a,e,d,ga,ge,gd);
     }

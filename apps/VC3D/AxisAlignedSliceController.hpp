@@ -45,6 +45,11 @@ public:
     // Apply slice plane orientations based on current state
     void applyOrientation(Surface* sourceOverride = nullptr);
 
+    // Turn the flattened segmentation view (display only: nodes never move or resample) and aim the
+    // seg xz / seg yz cuts across / along the direction that is shown level. Degrees, positive = clockwise.
+    void setFlatViewRotation(float degrees);
+    float flatViewRotation() const { return _flatViewRotationDeg; }
+
     // Schedule/flush orientation updates (with debounce timer)
     void scheduleOrientationUpdate();
     void flushOrientationUpdate();
@@ -66,6 +71,7 @@ private:
     bool _enabled{false};
     float _segXZRotationDeg{0.0f};
     float _segYZRotationDeg{0.0f};
+    float _flatViewRotationDeg{0.0f};
     QPointF _xyTilt{0.0, 0.0};
     double _segXZTilt{0.0};
     double _segYZTilt{0.0};
@@ -82,6 +88,7 @@ private:
     double _pendingOrientationMotionPx{0.0};
 
     void processOrientationUpdate();
+    void applyFlatViewRotation(float degrees);
     void notifyInteractiveOrientationViewers(double motionPx);
     void updateTiltHandles();
 };

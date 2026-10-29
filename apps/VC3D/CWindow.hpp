@@ -264,6 +264,7 @@ private slots:
         const std::string& toLoadedVolumeId) const;
     void updateOpenDataSegmentTransformState(bool showDialog = true);
     void resetSegmentationViews(bool persistLayout = true);
+    void syncFlatViewRotationControl();
     void onSurfaceActivated(const QString& surfaceId, QuadSurface* surface);
     void onSurfaceActivatedPreserveEditing(const QString& surfaceId, QuadSurface* surface);
     bool restoreActiveSurfaceAfterSurfaceReload(const std::string& surfaceId);
