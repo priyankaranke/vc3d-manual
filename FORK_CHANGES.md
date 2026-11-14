@@ -30,7 +30,7 @@ released under the same GNU GPL v3 or later as the original (see `LICENSE` and `
 The README has a section for this fork and documents the features; the commit history has
 the details.
 
-## Files that differ from upstream 05ff9ea (75 including README.md)
+## Files that differ from upstream 05ff9ea (77 including README.md)
 
 Modified (51 plus `README.md`):
 
@@ -86,8 +86,9 @@ Modified (51 plus `README.md`):
 - `core/test/test_line_annotation_context_menu.cpp`
 - `core/test/test_segmentation_autosave_state.cpp`
 
-Added (23):
+Added (25):
 
+- `FORK_CHANGES.md`
 - `apps/VC3D/segmentation/EditRegions.hpp`
 - `apps/VC3D/segmentation/SegmentationGenerationMetadata.cpp`
 - `apps/VC3D/segmentation/SegmentationGenerationMetadata.hpp`
@@ -110,4 +111,5 @@ Added (23):
 - `core/test/test_segmentation_growth_overlay.cpp`
 - `core/test/test_segmentation_undo_history.cpp`
 - `core/test/test_surface_display_map_rotation.cpp`
+- `docs/imgs/vc3d-manual-four-views.jpg`
 - `scripts/import_will_surface.py`

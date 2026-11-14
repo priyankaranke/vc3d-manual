@@ -16,10 +16,78 @@ The original Volume Cartographer is a general purpose toolkit for virtual unwrap
 
 ### VC3D Manual (this fork)
 
-A fork of VC3D for precise editing of segments by hand: extend or correct a
-surface by clicking on the CT, push or pull it with a brush, and see the
-flattened view update as you go. Every edit saves automatically and can be
-undone. The features are described under [Manual CT extension](#manual-ct-extension).
+A fork of VC3D for precise editing of segments by hand. A segment opens in a
+four-view workspace: the flattened surface next to XY, XZ and YZ cross-sections
+of the CT. Click on the CT to extend or correct the surface, push or pull it with
+a brush, and watch the flattened view update as you go. Every edit saves
+automatically and can be undone. The controls are listed under
+[Manual CT extension](#manual-ct-extension).
+
+![The VC3D Manual workspace: flattened segment at top left, XY, XZ and YZ CT views](docs/imgs/vc3d-manual-four-views.jpg)
+
+*A PHerc0306B segment from the public scan: the flattened surface (top left), the
+XY, XZ and YZ CT views (top right, bottom left, bottom right), and the editing
+controls across the top.*
+
+#### Build
+
+Build this repository from source. The Docker image and installers linked under
+[Installation Instructions](#installation-instructions) are upstream VC3D,
+without these tools.
+
+**macOS** (Apple Silicon with [Homebrew](https://brew.sh) and the Xcode
+command-line tools; tested on macOS 15):
+
+```bash
+git clone https://github.com/priyankaranke/vc3d-manual.git
+cd vc3d-manual
+scripts/build_macos.sh --install-deps
+build-macos/bin/VC3D
+```
+
+`--install-deps` installs only the Homebrew formulae that are missing. Add
+`--jobs N` to limit parallel compile jobs on a machine with little memory.
+
+**Linux** (Ubuntu 24.04 or newer, or Debian 13 or newer; tested in a clean
+Ubuntu 24.04 container):
+
+```bash
+git clone https://github.com/priyankaranke/vc3d-manual.git
+cd vc3d-manual
+./build_from_src_debian.sh
+VC3D
+```
+
+The script installs the build dependencies with `apt` (through `sudo`), builds,
+and installs `VC3D`, `flatboi` and the `vc_*` tools under `/usr/local`. Set
+`JOBS` to limit parallel jobs and `PREFIX` to install somewhere else.
+
+Windows and Docker builds follow upstream's instructions and have not been
+tested with this fork.
+
+#### Open a segment
+
+A project file names the CT volume and the folders that hold tifxyz segments
+(each segment is a folder with `x.tif`, `y.tif`, `z.tif` and `meta.json`). For
+example, a `project.volpkg.json` next to a `segments/` folder:
+
+```json
+{
+  "name": "my segments",
+  "version": 1,
+  "volumes": [
+    {"location": "https://vesuvius-challenge-open-data.s3.amazonaws.com/PHerc0306B/volumes/20250521133212-8.640um-1.2m-116keV-masked.zarr"}
+  ],
+  "segments": ["segments"],
+  "output_segments": "segments"
+}
+```
+
+Open it with **File → Open Project…**, then double-click a segment in the list.
+The four views open on it with editing enabled. The CT streams from the URL and
+is cached on disk.
+
+#### About this fork
 
 - **Upstream:** the `volume-cartographer/` folder of
   [ScrollPrize/villa](https://github.com/ScrollPrize/villa) at commit
@@ -29,7 +97,6 @@ undone. The features are described under [Manual CT extension](#manual-ct-extens
 - **Licence:** GNU GPL v3 or later, as upstream ([`LICENSE`](LICENSE),
   [`NOTICE`](NOTICE)). The changes in this fork were made in 2026 and are
   released under the same licence.
-- **Build:** as upstream; see [Installation Instructions](#installation-instructions).
 
 ### Manual CT extension
 
@@ -118,6 +185,10 @@ the click path. `VC3D_SETTINGS_FILE` optionally isolates a development build's
 settings from the installed app.
 
 ### Installation Instructions
+> **This fork:** the Docker image, Windows installer and macOS `.dmg` below are
+> upstream VC3D and do not include the manual editing tools. Build this repository
+> as described under [Build](#build) instead.
+
 Due to a complex set of dependencies, it is *highly* recommended to use the docker image. We host an up-to-date image on the [github container registry](https://github.com/ScrollPrize/villa/pkgs/container/villa%2Fvolume-cartographer) which can be pulled with a simple command :
 
 ```bash
