@@ -14,6 +14,23 @@ Via Vesuvius Challenge, it has gone through a few forks:
 this repository (developed and maintained by the Vesuvius Challenge team).
 The original Volume Cartographer is a general purpose toolkit for virtual unwrapping, while this version is specialized for the frontier challenges of the Herculaneum papyri.
 
+### VC3D Manual (this fork)
+
+A fork of VC3D for precise editing of segments by hand: extend or correct a
+surface by clicking on the CT, push or pull it with a brush, and see the
+flattened view update as you go. Every edit saves automatically and can be
+undone. The features are described under [Manual CT extension](#manual-ct-extension).
+
+- **Upstream:** the `volume-cartographer/` folder of
+  [ScrollPrize/villa](https://github.com/ScrollPrize/villa) at commit
+  [`05ff9ea`](https://github.com/ScrollPrize/villa/tree/05ff9ea39bf1077f8749fc1fe06f43a548350143/volume-cartographer) (13 July 2026).
+  [`FORK_CHANGES.md`](FORK_CHANGES.md) summarises the changes and lists every
+  file that differs from upstream.
+- **Licence:** GNU GPL v3 or later, as upstream ([`LICENSE`](LICENSE),
+  [`NOTICE`](NOTICE)). The changes in this fork were made in 2026 and are
+  released under the same licence.
+- **Build:** as upstream; see [Installation Instructions](#installation-instructions).
+
 ### Manual CT extension
 
 This branch adds a four-pane workspace: the flattened surface at top left,
@@ -24,7 +41,7 @@ Open a native tifxyz segment or import a Will atlas patch into a new project:
 
 ```sh
 python scripts/import_will_surface.py \
-  --atlas-url 'http://127.0.0.1:8798/?patch=YOUR_PATCH_ID' \
+  --atlas-url 'http://<atlas host>/?patch=YOUR_PATCH_ID' \
   --output /path/to/new-project
 ```
 
@@ -65,6 +82,30 @@ channels and correction anchors without image resizing. Clicks that would
 overstretch or fold the chart are rejected; grow in short steps (at most 12 grid
 steps per click). A/D retains VC3D's native brush behaviour and moves any clicked
 anchors with the edited surface.
+
+After each CT click or brush stroke, a small local flattening solve re-spaces
+the flattened view within 8 grid cells of the edit, so distances on screen match
+the true 3-D edge lengths. The edge of that neighbourhood stays fixed and a fold
+check limits the update. Only the display mapping changes: clicked XYZ positions
+and the saved grid stay exactly as they are. CT, ink overlays, picking and
+navigation all use the same mapping. The offsets are saved with the segment as
+`manual_view_u.tif` / `manual_view_v.tif`, and Undo/Redo restores them together
+with the geometry.
+
+- **Rotate** (Segment tab, next to **Focus patch**): turns the flattened view on
+  screen only, which helps when fibres run diagonally. Nodes never move and
+  nothing is resampled; rendering, clicks, the ink overlay and pan/zoom all use
+  the same rotation. With axis-aligned slices off, the side cuts turn with the
+  view. The angle is remembered per segment; `VC3D_VIEW_ROTATION=<deg>` sets it
+  at launch.
+- **Winding selector** for segments that stitch several windings into one grid:
+  list them in `meta.json` as `editing_regions`, for example
+  `[{"label": "w027", "cols": [0, 700], "rows": [0, 410]}]` (grid-cell ranges,
+  end exclusive), optionally with `editing_region_default` or
+  `editing_region_selected`. Only the chosen winding answers CT clicks, drags and
+  the A/D brush; the others are shaded and labelled in the flattened view and
+  drawn dimmer in the slice views. Regions move with the grid padding.
+
 This does not automatically trace the tissue.
 Edits use VC3D's normal atomic tifxyz saving. Navigation and focus markers use
 the live editing index, including after chart padding and Undo.
@@ -101,7 +142,7 @@ corresponding defaults.
 
 A self-contained Windows 10/11 installer (`VC3D-<version>-win64.exe`, with all dependencies bundled) is attached to each [GitHub release](https://github.com/ScrollPrize/villa/releases) — download, run, and launch VC3D from the Start menu. A portable `.zip` of the same tree is published alongside it.
 
-To build natively from source on Windows, use an [MSYS2](https://www.msys2.org/) UCRT64 shell (see [.github/workflows/vc3d-windows.yml](../.github/workflows/vc3d-windows.yml) for the package list), then:
+To build natively from source on Windows, use an [MSYS2](https://www.msys2.org/) UCRT64 shell (see [.github/workflows/vc3d-windows.yml](https://github.com/ScrollPrize/villa/blob/main/.github/workflows/vc3d-windows.yml) in the upstream repository for the package list), then:
 
 ```bash
 cmake --preset ci-windows-mingw
